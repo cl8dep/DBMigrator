@@ -5,6 +5,8 @@ A reusable CLI tool to migrate a PostgreSQL database from one server to another 
 ## Features
 
 - **Migrate** — `pg_dump` + `pg_restore` between any two Postgres instances
+- **Parallel migration** — `parallel_jobs: N` for faster dump/restore on large databases
+- **Live progress** — spinner with real-time per-table output and elapsed time during dump/restore
 - **Sanitize** — declarative YAML rules targeting specific tables and columns
 - **Pre-execution validation** — checks tables/columns exist, NOT NULL constraints, PK warnings — all against the live source DB
 - **All-or-nothing** — sanitization runs inside a single transaction; rolls back completely on any error
@@ -99,6 +101,7 @@ migration:
     exclude_tables: ["audit_logs", "sessions"]
     schema_only: false
     extra_pg_dump_args: []
+    parallel_jobs: 1                  # optional: >1 enables -j N with directory format
 
 sanitize:
   - table: users

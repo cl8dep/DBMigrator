@@ -25,6 +25,10 @@ migration:
     schema_only: false
     # Extra flags passed verbatim to pg_dump
     extra_pg_dump_args: []
+    # Number of parallel workers for pg_dump / pg_restore (-j N).
+    # When > 1, the format is automatically switched to "directory" (required by pg_dump -j).
+    # Default: 1 (single-threaded). Increase for large databases with many tables.
+    # parallel_jobs: 4
 
 # Sanitization rules applied to the TARGET database after restore.
 # Each rule targets a table and declares which columns to sanitize and how.
