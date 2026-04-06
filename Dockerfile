@@ -10,8 +10,7 @@ RUN dotnet restore src/DbMigrator/DbMigrator.csproj
 COPY src/DbMigrator/ src/DbMigrator/
 RUN dotnet publish src/DbMigrator/DbMigrator.csproj \
     -c Release \
-    -o /out \
-    --no-restore
+    -o /out
 
 # Stage 2: Runtime
 # debian-slim is required (not scratch/distroless) because we need
