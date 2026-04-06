@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using DbMigrator.Config;
 using Microsoft.Extensions.Logging;
+using Npgsql;
 using Spectre.Console;
 
 namespace DbMigrator.Migration;
@@ -25,6 +26,8 @@ public class Migrator(ILogger<Migrator> logger)
 
         try
         {
+            await RunPreflightChecksAsync(config.Source, ct);
+
             logger.LogInformation("Starting dump from {Database}@{Host}:{Port}",
                 config.Source.Database, config.Source.Host, config.Source.Port);
 
@@ -150,6 +153,56 @@ public class Migrator(ILogger<Migrator> logger)
 
         args.Add(dumpPath);
         return args;
+    }
+
+    private static async Task RunPreflightChecksAsync(DbConfig source, CancellationToken ct)
+    {
+        AnsiConsole.MarkupLine("[grey]Running pre-flight checks on source DB...[/]");
+
+        await using var conn = new NpgsqlConnection(source.ToConnectionString());
+        await conn.OpenAsync(ct);
+
+        // 1. Idle-in-transaction connections — these block pg_dump acquiring table locks
+        await using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = """
+                SELECT count(*), max(now() - query_start)
+                FROM pg_stat_activity
+                WHERE state = 'idle in transaction'
+                  AND pid <> pg_backend_pid()
+                """;
+            await using var reader = await cmd.ExecuteReaderAsync(ct);
+            if (await reader.ReadAsync(ct))
+            {
+                var count = reader.GetInt64(0);
+                if (count > 0)
+                {
+                    var maxAge = reader.IsDBNull(1) ? TimeSpan.Zero : reader.GetTimeSpan(1);
+                    AnsiConsole.MarkupLine(
+                        $"[yellow]⚠ PRE-FLIGHT[/] {count} connection(s) are [bold]idle in transaction[/] " +
+                        $"(oldest: {maxAge:g}) — these may block pg_dump. " +
+                        $"Run: [grey]SELECT pg_terminate_backend(pid) FROM pg_stat_activity " +
+                        $"WHERE state = 'idle in transaction' AND pid <> pg_backend_pid();[/]");
+                }
+            }
+        }
+
+        // 2. Ungranted locks — another sign of contention
+        await using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = """
+                SELECT count(*)
+                FROM pg_locks
+                WHERE granted = false
+                """;
+            var ungrantedLocks = (long)(await cmd.ExecuteScalarAsync(ct) ?? 0L);
+            if (ungrantedLocks > 0)
+                AnsiConsole.MarkupLine(
+                    $"[yellow]⚠ PRE-FLIGHT[/] {ungrantedLocks} ungranted lock(s) detected — " +
+                    "there is active lock contention on the source DB.");
+        }
+
+        AnsiConsole.MarkupLine("[grey]Pre-flight checks done.[/]");
     }
 
     private void CleanupDump(string dumpPath, bool isDirectory)
