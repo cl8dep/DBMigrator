@@ -44,10 +44,25 @@ public class MigratorArgBuilderTests
         args.Should().Contain("--port").And.Contain("5433");
         args.Should().Contain("--username").And.Contain("admin");
         args.Should().Contain("--format").And.Contain("custom");
-        args.Should().Contain("--verbose");
         args.Should().Contain("--no-password");
         args.Should().Contain("--file").And.Contain("/tmp/dump.dump");
         args.Should().Contain("mydb"); // database name always last
+    }
+
+    [Fact]
+    public void BuildPgDumpArgs_VerboseFalse_NoVerboseFlag()
+    {
+        var config = MakeConfig();
+        var args = Migrator.BuildPgDumpArgs(config, "/tmp/dump.dump", verbose: false);
+        args.Should().NotContain("--verbose");
+    }
+
+    [Fact]
+    public void BuildPgDumpArgs_VerboseTrue_AddsVerboseFlag()
+    {
+        var config = MakeConfig();
+        var args = Migrator.BuildPgDumpArgs(config, "/tmp/dump.dump", verbose: true);
+        args.Should().Contain("--verbose");
     }
 
     [Fact]
@@ -155,8 +170,16 @@ public class MigratorArgBuilderTests
         args.Should().Contain("--no-password");
         args.Should().Contain("--clean");
         args.Should().Contain("--if-exists");
-        args.Should().Contain("--verbose");
+        args.Should().NotContain("--verbose", "verbose is opt-in via --log-level debug");
         args.Should().Contain("/tmp/dump.dump");
+    }
+
+    [Fact]
+    public void BuildPgRestoreArgs_VerboseTrue_AddsVerboseFlag()
+    {
+        var config = MakeConfig();
+        var args = Migrator.BuildPgRestoreArgs(config, "/tmp/dump.dump", verbose: true);
+        args.Should().Contain("--verbose");
     }
 
     [Fact]

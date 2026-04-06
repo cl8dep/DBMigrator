@@ -26,4 +26,10 @@ public class BaseSettings : CommandSettings
     [Description("Log level: debug, info, warn, error")]
     [DefaultValue("info")]
     public string LogLevel { get; set; } = "info";
+
+    [CommandOption("--print-args")]
+    [Description("Print the pg_dump / pg_restore command arguments before executing")]
+    public bool PrintArgs { get; set; }
+
+    public bool IsDebug => LogLevel.Equals("debug", StringComparison.OrdinalIgnoreCase);
 }

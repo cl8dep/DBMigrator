@@ -10,6 +10,12 @@ public class Migrator(ILogger<Migrator> logger)
     /// <summary>Maximum time allowed for each subprocess (pg_dump or pg_restore).</summary>
     public TimeSpan ProcessTimeout { get; set; } = TimeSpan.FromHours(2);
 
+    /// <summary>Pass --verbose to pg_dump / pg_restore and stream their stderr output live.</summary>
+    public bool Verbose { get; set; }
+
+    /// <summary>Print the full argument list for each subprocess before executing.</summary>
+    public bool PrintArgs { get; set; }
+
     public async Task RunAsync(MigrationConfig config, CancellationToken ct = default)
     {
         bool parallel = config.Dump.ParallelJobs > 1;
@@ -69,7 +75,7 @@ public class Migrator(ILogger<Migrator> logger)
     private async Task DumpAsync(
         MigrationConfig config, string dumpPath, Action<string> onProgress, CancellationToken ct)
     {
-        var args = BuildPgDumpArgs(config, dumpPath);
+        var args = BuildPgDumpArgs(config, dumpPath, Verbose);
         var env = new Dictionary<string, string> { ["PGPASSWORD"] = config.Source.Password };
         await RunProcessAsync("pg_dump", args, env, onProgress, ct);
     }
@@ -77,12 +83,12 @@ public class Migrator(ILogger<Migrator> logger)
     private async Task RestoreAsync(
         MigrationConfig config, string dumpPath, Action<string> onProgress, CancellationToken ct)
     {
-        var args = BuildPgRestoreArgs(config, dumpPath);
+        var args = BuildPgRestoreArgs(config, dumpPath, Verbose);
         var env = new Dictionary<string, string> { ["PGPASSWORD"] = config.Target.Password };
         await RunProcessAsync("pg_restore", args, env, onProgress, ct);
     }
 
-    public static List<string> BuildPgDumpArgs(MigrationConfig config, string dumpPath)
+    public static List<string> BuildPgDumpArgs(MigrationConfig config, string dumpPath, bool verbose = false)
     {
         bool parallel = config.Dump.ParallelJobs > 1;
         var args = new List<string>
@@ -91,10 +97,12 @@ public class Migrator(ILogger<Migrator> logger)
             "--port",     config.Source.Port.ToString(),
             "--username", config.Source.User,
             "--format",   parallel ? "directory" : "custom",
-            "--verbose",
             "--no-password",
             "--file",     dumpPath
         };
+
+        if (verbose)
+            args.Add("--verbose");
 
         if (parallel)
         {
@@ -117,7 +125,7 @@ public class Migrator(ILogger<Migrator> logger)
         return args;
     }
 
-    public static List<string> BuildPgRestoreArgs(MigrationConfig config, string dumpPath)
+    public static List<string> BuildPgRestoreArgs(MigrationConfig config, string dumpPath, bool verbose = false)
     {
         bool parallel = config.Dump.ParallelJobs > 1;
         var args = new List<string>
@@ -128,9 +136,11 @@ public class Migrator(ILogger<Migrator> logger)
             "--dbname",   config.Target.Database,
             "--no-password",
             "--clean",
-            "--if-exists",
-            "--verbose"
+            "--if-exists"
         };
+
+        if (verbose)
+            args.Add("--verbose");
 
         if (parallel)
         {
@@ -184,6 +194,12 @@ public class Migrator(ILogger<Migrator> logger)
 
         foreach (var (key, value) in env)
             psi.Environment[key] = value;
+
+        // Always log full args at debug level; print to console when --print-args is set
+        var argLine = string.Join(' ', args.Select(a => a.Contains(' ') ? $"\"{a}\"" : a));
+        logger.LogDebug("Executing: {Exe} {Args}", executable, argLine);
+        if (PrintArgs)
+            AnsiConsole.MarkupLine($"[grey]▸ {Markup.Escape(executable)} {Markup.Escape(argLine)}[/]");
 
         using var process = new Process { StartInfo = psi };
 
