@@ -1,0 +1,532 @@
+<!DOCTYPE html>
+<html lang="en" class="scroll-smooth">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>db-migrator — Migrate & Sanitize PostgreSQL</title>
+  <meta name="description" content="CLI tool to migrate PostgreSQL databases and declaratively sanitize sensitive data. Runs locally, in Docker, or as a Cloud Run Job." />
+  <meta property="og:title" content="db-migrator" />
+  <meta property="og:description" content="One command. Clean data." />
+
+  <!-- Inter -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet" />
+
+  <!-- Prism Tomorrow Night -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css" />
+
+  <!-- Tailwind -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: { inter: ['Inter', '-apple-system', 'sans-serif'] },
+          colors: {
+            'blue':   '#2997ff',
+            'purple': '#bf5af2',
+            'green':  '#30d158',
+            'red':    '#ff375f',
+            'amber':  '#ffd60a',
+          },
+        },
+      },
+    };
+  </script>
+
+  <style>
+    *, *::before, *::after { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; }
+    html { background: #000; }
+
+    ::-webkit-scrollbar { width: 5px; }
+    ::-webkit-scrollbar-track { background: #000; }
+    ::-webkit-scrollbar-thumb { background: #222; border-radius: 4px; }
+
+    /* ── Blobs ── */
+    .blob {
+      position: absolute;
+      border-radius: 50%;
+      pointer-events: none;
+      filter: blur(90px);
+    }
+
+    /* ── Gradient text ── */
+    .grad-blue-purple {
+      background: linear-gradient(135deg, #2997ff 0%, #bf5af2 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    /* ── Terminal cursor ── */
+    @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0} }
+    .cursor { animation: blink 1s step-end infinite; }
+
+    /* ── Prism reset ── */
+    pre[class*="language-"] { background: transparent !important; margin: 0 !important; padding: 0 !important; font-size: 12.5px !important; line-height: 1.65 !important; }
+    code[class*="language-"] { font-family: 'JetBrains Mono','Cascadia Code','Fira Code',monospace !important; font-size: 12.5px !important; }
+
+    /* ── Strategy card accent bar ── */
+    .strategy-card::before {
+      content: '';
+      position: absolute;
+      inset: 0 0 auto 0;
+      height: 2px;
+      border-radius: 12px 12px 0 0;
+      background: var(--accent, #2997ff);
+    }
+
+    /* ── Terminal line colors ── */
+    .t-prompt  { color: #555; }
+    .t-cmd     { color: #e8e8e8; }
+    .t-ok      { color: #30d158; }
+    .t-info    { color: #6e6e73; }
+    .t-section { color: #2997ff; }
+    .t-row     { color: #c0c0c0; }
+
+    /* ── Nav link ── */
+    .nav-link { color: #86868b; transition: color .2s; }
+    .nav-link:hover { color: #fff; }
+
+    /* ── Fade-up (GSAP controls visibility via autoAlpha) ── */
+    .fade-up { visibility: hidden; }
+
+    /* ── Tab active ── */
+    .tab-btn { color: #86868b; transition: all .2s; }
+    .tab-btn.active { background: rgba(255,255,255,0.1); color: #fff; }
+
+    /* ── Mobile horizontal scroll for strategy ── */
+    @media (max-width: 767px) {
+      .strategy-grid {
+        display: flex;
+        overflow-x: auto;
+        scroll-snap-type: x mandatory;
+        gap: 14px;
+        padding-bottom: 8px;
+        -webkit-overflow-scrolling: touch;
+      }
+      .strategy-grid::-webkit-scrollbar { display: none; }
+      .strategy-item { scroll-snap-align: start; min-width: 250px; flex-shrink: 0; }
+    }
+  </style>
+</head>
+
+<body class="bg-black text-white antialiased overflow-x-hidden">
+
+<!-- ═══════════════════════════════ NAV ═══════════════════════════════ -->
+<nav id="navbar" class="fixed top-0 inset-x-0 z-50 border-b border-white/5 transition-all"
+     style="background:rgba(0,0,0,0.72);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px)">
+  <div class="max-w-6xl mx-auto px-5 h-14 flex items-center justify-between">
+
+    <a href="#" class="flex items-center gap-2 text-sm font-semibold text-white">
+      <svg width="22" height="22" viewBox="0 0 22 22" fill="none">
+        <rect x="1" y="6" width="8" height="10" rx="2.5" fill="#2997ff" opacity=".9"/>
+        <rect x="13" y="6" width="8" height="10" rx="2.5" fill="#bf5af2" opacity=".75"/>
+        <path d="M9 10.5h4M9 13h4" stroke="white" stroke-width="1.4" stroke-linecap="round" opacity=".6"/>
+      </svg>
+      db-migrator
+    </a>
+
+    <div class="hidden md:flex items-center gap-7 text-sm">
+      <a href="#features"     class="nav-link">Features</a>
+      <a href="#strategies"   class="nav-link">Strategies</a>
+      <a href="#how-it-works" class="nav-link">How it works</a>
+      <a href="#install"      class="nav-link">Install</a>
+    </div>
+
+    <a href="https://github.com/cl8dep/DBMigrator/releases/latest" target="_blank"
+       class="text-sm font-medium px-4 py-1.5 rounded-full border border-white/20 hover:bg-white/8 transition-colors">
+      Download
+    </a>
+
+  </div>
+</nav>
+
+<!-- ═══════════════════════════════ HERO ═══════════════════════════════ -->
+<section class="relative min-h-screen flex flex-col items-center justify-center pt-14 overflow-hidden">
+
+  <!-- Blobs -->
+  <div class="blob" style="width:700px;height:700px;top:-150px;left:50%;transform:translateX(-55%);background:radial-gradient(circle,rgba(41,151,255,.16) 0%,transparent 65%);"></div>
+  <div class="blob" style="width:550px;height:550px;top:50px;right:-120px;background:radial-gradient(circle,rgba(191,90,242,.13) 0%,transparent 65%);"></div>
+  <div class="blob" style="width:350px;height:350px;bottom:80px;left:-80px;background:radial-gradient(circle,rgba(48,209,88,.07) 0%,transparent 65%);"></div>
+
+  <!-- Content -->
+  <div class="relative z-10 text-center px-6 max-w-4xl mx-auto w-full">
+
+    <!-- Badge -->
+    <div id="h-badge" class="fade-up inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full border border-white/10 text-xs text-[#86868b] mb-8">
+      <span class="w-1.5 h-1.5 rounded-full bg-[#30d158] inline-block"></span>
+      v0.2.0 · Open Source · MIT
+    </div>
+
+    <!-- Headline -->
+    <h1 id="h-title" class="fade-up text-[clamp(2.8rem,8vw,6rem)] font-extrabold tracking-tight leading-[1.05] mb-6">
+      <span class="text-white">One command.</span><br>
+      <span class="grad-blue-purple">Clean data.</span>
+    </h1>
+
+    <!-- Sub -->
+    <p id="h-sub" class="fade-up text-lg md:text-xl text-[#86868b] max-w-lg mx-auto mb-10 leading-relaxed">
+      Migrate PostgreSQL databases between environments and declaratively sanitize sensitive columns. No leaks, no drama.
+    </p>
+
+    <!-- CTAs -->
+    <div id="h-ctas" class="fade-up flex flex-col sm:flex-row gap-3 justify-center mb-14">
+      <a href="https://github.com/cl8dep/DBMigrator/releases/latest/download/db-migrator-macos-arm64"
+         class="inline-flex items-center justify-center gap-2 px-6 py-3 rounded-full bg-white text-black text-sm font-semibold hover:bg-white/90 transition-colors">
+        <svg width="14" height="14" viewBox="0 0 814 1000" fill="currentColor"><path d="M788.1 340.9c-5.8 4.5-108.2 62.2-108.2 190.5 0 148.4 130.3 200.9 134.2 202.2-.6 3.2-20.7 71.9-68.7 141.9-42.8 61.6-87.5 123.1-155.5 123.1s-85.5-39.5-164-39.5c-76 0-103.7 40.8-165.9 40.8s-105-37.5-150.6-95.2C87.3 734 50 558.8 50 385.1c0-75.2 14.9-148.1 51-209.5 50-79.2 133.3-129.1 222.8-129.1 83.9 0 152.6 54.5 204.3 54.5 48.9 0 127.8-58.8 224.1-58.8 36.5 0 118.2 9.6 170.4 89.2zm-188.5-83.9c23.1-26.9 40.2-64.3 40.2-101.7 0-5.2-.4-10.4-1.3-14.9-37.8 1.5-83.5 25.1-110.5 54.9-21.5 23.7-41.2 61.1-41.2 99.1 0 5.8.9 11.6 1.3 13.5 2.3.4 6 .6 9.8.6 34.5 0 77.1-22.5 101.7-51.5z"/></svg>
+        Download for macOS
+      </a>
+      <a href="https://github.com/cl8dep/DBMigrator" target="_blank"
+         class="inline-flex items-center justify-center gap-2 px-6 py-3 rounded-full border border-white/15 text-white text-sm font-medium hover:bg-white/5 transition-colors">
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor"><path fill-rule="evenodd" d="M7 0C3.13 0 0 3.13 0 7c0 3.09 2.01 5.72 4.79 6.65.35.06.48-.15.48-.34v-1.2C3.24 12.5 2.83 11.1 2.83 11.1c-.32-.81-.78-1.02-.78-1.02-.64-.43.05-.43.05-.43.7.05 1.07.72 1.07.72.62 1.07 1.64.76 2.04.58.06-.45.24-.76.44-.93-1.55-.18-3.19-.78-3.19-3.46 0-.77.27-1.39.72-1.88-.07-.18-.31-.89.07-1.85 0 0 .59-.19 1.92.72A6.7 6.7 0 017 3.58c.59 0 1.19.08 1.75.23 1.34-.91 1.92-.72 1.92-.72.38.96.14 1.67.07 1.85.45.49.72 1.11.72 1.88 0 2.69-1.64 3.28-3.2 3.45.25.22.48.65.48 1.31v1.94c0 .19.12.41.48.34A7.01 7.01 0 0014 7c0-3.87-3.13-7-7-7z"/></svg>
+        View on GitHub
+      </a>
+    </div>
+
+    <!-- Terminal window -->
+    <div id="h-terminal" class="fade-up w-full md:w-[70vw] rounded-2xl overflow-hidden border border-white/8"
+         style="position:relative;left:50%;transform:translateX(-50%)"
+         style="background:#080808;box-shadow:0 50px 100px rgba(0,0,0,0.7),0 0 0 1px rgba(255,255,255,0.04)">
+      <!-- Chrome -->
+      <div class="flex items-center gap-2 px-4 py-3 border-b border-white/5">
+        <span class="w-3 h-3 rounded-full bg-[#ff5f57]"></span>
+        <span class="w-3 h-3 rounded-full bg-[#febc2e]"></span>
+        <span class="w-3 h-3 rounded-full bg-[#28c840]"></span>
+        <span class="ml-3 text-xs text-[#555] font-mono">zsh — db-migrator</span>
+      </div>
+      <!-- Output -->
+      <div class="p-5 text-left text-[13px] min-h-[260px] overflow-x-auto"
+           style="white-space:pre;line-height:1.7;font-family:'JetBrains Mono','Cascadia Code','Fira Code',Menlo,Monaco,Consolas,monospace">
+        <span id="term-out"></span><span class="cursor text-[#555]">▋</span>
+      </div>
+    </div>
+
+  </div>
+</section>
+
+<!-- ═══════════════════════════════ FEATURES ═══════════════════════════════ -->
+<section id="features" class="py-28 max-w-6xl mx-auto px-5">
+  <p class="fade-up text-xs text-[#555] uppercase tracking-widest mb-3">Why db-migrator</p>
+  <h2 class="fade-up text-[clamp(2rem,5vw,3.5rem)] font-bold text-white mb-16 leading-tight">
+    Migrate. Validate.<br>Sanitize.
+  </h2>
+
+  <!-- Row 1: 3 cards -->
+  <div class="grid md:grid-cols-3 gap-4 mb-4">
+
+    <div class="fade-up rounded-2xl p-7 border border-white/6 bg-[#0c0c0c]">
+      <div class="w-9 h-9 rounded-xl flex items-center justify-center mb-5" style="background:rgba(41,151,255,.14)">
+        <svg width="17" height="17" viewBox="0 0 17 17" fill="none" stroke="#2997ff" stroke-width="1.7" stroke-linecap="round"><circle cx="8.5" cy="8.5" r="6"/><path d="M6 8.5l2 2 3-3"/></svg>
+      </div>
+      <h3 class="text-white font-semibold mb-2">Validate first</h3>
+      <p class="text-[#6e6e73] text-sm leading-relaxed">Connects to source DB before anything moves. Catches missing tables, wrong column types, NOT NULL violations. Zero surprises mid-migration.</p>
+    </div>
+
+    <div class="fade-up rounded-2xl p-7 border border-white/6 bg-[#0c0c0c]" style="animation-delay:.08s">
+      <div class="w-9 h-9 rounded-xl flex items-center justify-center mb-5" style="background:rgba(191,90,242,.14)">
+        <svg width="17" height="17" viewBox="0 0 17 17" fill="none" stroke="#bf5af2" stroke-width="1.7" stroke-linecap="round"><path d="M8.5 1L2 5v10h5V9h3v6h5V5L8.5 1z"/></svg>
+      </div>
+      <h3 class="text-white font-semibold mb-2">All-or-nothing</h3>
+      <p class="text-[#6e6e73] text-sm leading-relaxed">Sanitization runs inside a single transaction. One rule fails → full rollback. No partial states, no half-redacted tables.</p>
+    </div>
+
+    <div class="fade-up rounded-2xl p-7 border border-white/6 bg-[#0c0c0c]" style="animation-delay:.16s">
+      <div class="w-9 h-9 rounded-xl flex items-center justify-center mb-5" style="background:rgba(48,209,88,.11)">
+        <svg width="17" height="17" viewBox="0 0 17 17" fill="none" stroke="#30d158" stroke-width="1.7" stroke-linecap="round"><path d="M4 8.5h9M8.5 4l4.5 4.5-4.5 4.5"/></svg>
+      </div>
+      <h3 class="text-white font-semibold mb-2">Parallel for speed</h3>
+      <p class="text-[#6e6e73] text-sm leading-relaxed">Set <code class="text-[#2997ff] text-xs bg-[#2997ff]/8 px-1 rounded">parallel_jobs: 4</code> to use multiple workers. Auto-switches to directory format. Cut migration time significantly.</p>
+    </div>
+
+  </div>
+
+  <!-- Row 2: 2 wide cards -->
+  <div class="grid md:grid-cols-2 gap-4">
+
+    <div class="fade-up rounded-2xl p-7 border border-white/6 bg-[#0c0c0c]">
+      <div class="w-9 h-9 rounded-xl flex items-center justify-center mb-5" style="background:rgba(255,214,10,.11)">
+        <svg width="17" height="17" viewBox="0 0 17 17" fill="none" stroke="#ffd60a" stroke-width="1.7" stroke-linecap="round"><circle cx="8.5" cy="8.5" r="6"/><path d="M8.5 5.5V9l2.5 1.5"/></svg>
+      </div>
+      <h3 class="text-white font-semibold mb-2">Live progress</h3>
+      <p class="text-[#6e6e73] text-sm leading-relaxed">Spinner streams pg_dump verbose output in real time. Elapsed time per step. You always know exactly what's happening.</p>
+    </div>
+
+    <div class="fade-up rounded-2xl p-7 border border-white/6 bg-[#0c0c0c]" style="animation-delay:.08s">
+      <div class="w-9 h-9 rounded-xl flex items-center justify-center mb-5" style="background:rgba(255,55,95,.11)">
+        <svg width="17" height="17" viewBox="0 0 17 17" fill="none" stroke="#ff375f" stroke-width="1.7" stroke-linecap="round"><path d="M8.5 2.5l-6 11h12l-6-11z"/><path d="M8.5 7.5v2.5M8.5 12h.01"/></svg>
+      </div>
+      <h3 class="text-white font-semibold mb-2">Pre-flight checks</h3>
+      <p class="text-[#6e6e73] text-sm leading-relaxed">Detects <code class="text-[#ff375f] text-xs bg-[#ff375f]/8 px-1 rounded">idle in transaction</code> connections that would block pg_dump — before the dump even starts.</p>
+    </div>
+
+  </div>
+</section>
+
+<!-- ═══════════════════════════════ STRATEGIES ═══════════════════════════════ -->
+<section id="strategies" class="py-28 border-t border-white/5">
+  <div class="max-w-6xl mx-auto px-5">
+    <p class="fade-up text-xs text-[#555] uppercase tracking-widest mb-3">Sanitization</p>
+    <h2 class="fade-up text-[clamp(2rem,5vw,3.5rem)] font-bold text-white mb-3">There's a strategy<br>for that.</h2>
+    <p class="fade-up text-[#6e6e73] mb-12 max-w-md text-sm leading-relaxed">Five built-in strategies cover every data sanitization scenario. Declare them per column in YAML.</p>
+
+    <div class="strategy-grid grid md:grid-cols-5 gap-4">
+
+      <div class="strategy-item fade-up">
+        <div class="strategy-card relative rounded-2xl p-5 h-full border border-white/6 bg-[#0c0c0c]" style="--accent:#2997ff">
+          <p class="text-[11px] text-[#2997ff] font-mono font-bold uppercase tracking-wider mb-3">static</p>
+          <p class="text-[#6e6e73] text-xs leading-relaxed mb-4">Fixed value for every row. For hashed passwords, redacted fields.</p>
+          <code class="text-[11px] text-[#555] font-mono block">strategy: static<br>value: "REDACTED"</code>
+        </div>
+      </div>
+
+      <div class="strategy-item fade-up" style="animation-delay:.06s">
+        <div class="strategy-card relative rounded-2xl p-5 h-full border border-white/6 bg-[#0c0c0c]" style="--accent:#ff375f">
+          <p class="text-[11px] text-[#ff375f] font-mono font-bold uppercase tracking-wider mb-3">null_value</p>
+          <p class="text-[#6e6e73] text-xs leading-relaxed mb-4">Sets the column to NULL. Column must be nullable — validated before execution.</p>
+          <code class="text-[11px] text-[#555] font-mono block">strategy: null_value</code>
+        </div>
+      </div>
+
+      <div class="strategy-item fade-up" style="animation-delay:.12s">
+        <div class="strategy-card relative rounded-2xl p-5 h-full border border-white/6 bg-[#0c0c0c]" style="--accent:#ffd60a">
+          <p class="text-[11px] text-[#ffd60a] font-mono font-bold uppercase tracking-wider mb-3">template</p>
+          <p class="text-[#6e6e73] text-xs leading-relaxed mb-4"><span style="color:#ffd60a">{column}</span> refs resolved per row via SQL. Unique, traceable values.</p>
+          <code class="text-[11px] text-[#555] font-mono block">strategy: template<br>value: "user_{id}<br>  @redacted.local"</code>
+        </div>
+      </div>
+
+      <div class="strategy-item fade-up" style="animation-delay:.18s">
+        <div class="strategy-card relative rounded-2xl p-5 h-full border border-white/6 bg-[#0c0c0c]" style="--accent:#30d158">
+          <p class="text-[11px] text-[#30d158] font-mono font-bold uppercase tracking-wider mb-3">faker</p>
+          <p class="text-[#6e6e73] text-xs leading-relaxed mb-4">Realistic fake data via Bogus. 25+ methods: names, emails, phones, IBANs.</p>
+          <code class="text-[11px] text-[#555] font-mono block">strategy: faker<br>faker: email</code>
+        </div>
+      </div>
+
+      <div class="strategy-item fade-up" style="animation-delay:.24s">
+        <div class="strategy-card relative rounded-2xl p-5 h-full border border-white/6 bg-[#0c0c0c]" style="--accent:#bf5af2">
+          <p class="text-[11px] text-[#bf5af2] font-mono font-bold uppercase tracking-wider mb-3">hash</p>
+          <p class="text-[#6e6e73] text-xs leading-relaxed mb-4">SHA-256 of original value. Deterministic — preserves FK relationships.</p>
+          <code class="text-[11px] text-[#555] font-mono block">strategy: hash</code>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════ CONFIG ═══════════════════════════════ -->
+<section id="config" class="py-28 border-t border-white/5">
+  <div class="max-w-6xl mx-auto px-5">
+    <div class="grid md:grid-cols-2 gap-16 items-center">
+
+      <!-- Text -->
+      <div>
+        <p class="fade-up text-xs text-[#555] uppercase tracking-widest mb-3">Configuration</p>
+        <h2 class="fade-up text-[clamp(2rem,5vw,3.2rem)] font-bold text-white mb-6 leading-tight">Declare it.<br>Run it.</h2>
+        <p class="fade-up text-[#6e6e73] text-sm leading-relaxed mb-8 max-w-sm">One YAML file. Which tables, which columns, which strategy. Passwords via environment variables. The tool handles the rest.</p>
+        <ul class="space-y-3.5">
+          <li class="fade-up flex items-start gap-3 text-sm text-[#6e6e73]">
+            <span class="w-1.5 h-1.5 rounded-full bg-[#2997ff] flex-shrink-0 mt-1.5"></span>
+            <span><code class="text-[#2997ff] text-xs">${ENV_VAR}</code> interpolation — passwords never live in the config file</span>
+          </li>
+          <li class="fade-up flex items-start gap-3 text-sm text-[#6e6e73]">
+            <span class="w-1.5 h-1.5 rounded-full bg-[#bf5af2] flex-shrink-0 mt-1.5"></span>
+            <span>Optional <code class="text-[#bf5af2] text-xs">where</code> clause to skip admin rows or seed data</span>
+          </li>
+          <li class="fade-up flex items-start gap-3 text-sm text-[#6e6e73]">
+            <span class="w-1.5 h-1.5 rounded-full bg-[#30d158] flex-shrink-0 mt-1.5"></span>
+            <span>Mix strategies freely per column — no constraints</span>
+          </li>
+          <li class="fade-up flex items-start gap-3 text-sm text-[#6e6e73]">
+            <span class="w-1.5 h-1.5 rounded-full bg-[#ffd60a] flex-shrink-0 mt-1.5"></span>
+            <span><code class="text-[#ffd60a] text-xs">parallel_jobs: N</code> for faster dump/restore on large databases</span>
+          </li>
+        </ul>
+      </div>
+
+      <!-- Code window -->
+      <div class="fade-up rounded-2xl overflow-hidden border border-white/7"
+           style="background:#080808;box-shadow:0 30px 70px rgba(0,0,0,0.6)">
+        <div class="flex items-center justify-between px-4 py-3 border-b border-white/5">
+          <div class="flex items-center gap-1.5">
+            <span class="w-3 h-3 rounded-full bg-[#ff5f57]"></span>
+            <span class="w-3 h-3 rounded-full bg-[#febc2e]"></span>
+            <span class="w-3 h-3 rounded-full bg-[#28c840]"></span>
+          </div>
+          <span class="text-xs text-[#555] font-mono">config.yaml</span>
+          <button class="copy-btn text-xs text-[#555] hover:text-white transition-colors px-2 py-1 rounded"
+                  data-copy="sanitize:&#10;  - table: users&#10;    where: &quot;role != 'admin'&quot;&#10;    columns:&#10;      - name: email&#10;        strategy: template&#10;        value: &quot;user_{id}@redacted.local&quot;&#10;      - name: first_name&#10;        strategy: faker&#10;        faker: first_name&#10;      - name: password_hash&#10;        strategy: static&#10;        value: &quot;$2b$10$REDACTED&quot;&#10;      - name: national_id&#10;        strategy: hash&#10;      - name: avatar_url&#10;        strategy: null_value">
+            Copy
+          </button>
+        </div>
+        <div class="p-5 overflow-x-auto">
+          <pre class="language-yaml"><code class="language-yaml">sanitize:
+  - table: users
+    where: "role != 'admin'"
+    columns:
+      - name: email
+        strategy: template
+        value: "user_{id}@redacted.local"
+
+      - name: first_name
+        strategy: faker
+        faker: first_name
+
+      - name: password_hash
+        strategy: static
+        value: "$2b$10$REDACTED"
+
+      - name: national_id
+        strategy: hash
+
+      - name: avatar_url
+        strategy: null_value</code></pre>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════ HOW IT WORKS ═══════════════════════════════ -->
+<section id="how-it-works" class="py-28 border-t border-white/5">
+  <div class="max-w-6xl mx-auto px-5">
+    <p class="fade-up text-xs text-[#555] uppercase tracking-widest mb-3">Process</p>
+    <h2 class="fade-up text-[clamp(2rem,5vw,3.5rem)] font-bold text-white mb-16">Three steps.<br>One command.</h2>
+
+    <div class="grid md:grid-cols-3 gap-4">
+
+      <div class="fade-up rounded-2xl p-7 border border-white/6 bg-[#0c0c0c] relative overflow-hidden">
+        <span class="absolute top-4 right-5 text-8xl font-black leading-none" style="color:rgba(255,255,255,.03)">01</span>
+        <div class="w-9 h-9 rounded-xl flex items-center justify-center mb-5" style="background:rgba(41,151,255,.13)">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="#2997ff" stroke-width="1.7" stroke-linecap="round"><path d="M5 8l2.5 2.5L12 5"/><circle cx="8" cy="8" r="6.5"/></svg>
+        </div>
+        <h3 class="text-white font-semibold mb-2">Validate</h3>
+        <p class="text-[#6e6e73] text-sm leading-relaxed">Connects to source DB. Checks tables, columns, nullability, and strategy config. Reports every error before any data moves.</p>
+      </div>
+
+      <div class="fade-up rounded-2xl p-7 border border-white/6 bg-[#0c0c0c] relative overflow-hidden" style="animation-delay:.1s">
+        <span class="absolute top-4 right-5 text-8xl font-black leading-none" style="color:rgba(255,255,255,.03)">02</span>
+        <div class="w-9 h-9 rounded-xl flex items-center justify-center mb-5" style="background:rgba(191,90,242,.13)">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="#bf5af2" stroke-width="1.7" stroke-linecap="round"><rect x="1" y="4" width="5.5" height="8" rx="1.5"/><rect x="9.5" y="4" width="5.5" height="8" rx="1.5"/><path d="M6.5 8h3"/></svg>
+        </div>
+        <h3 class="text-white font-semibold mb-2">Migrate</h3>
+        <p class="text-[#6e6e73] text-sm leading-relaxed">pg_dump on source, pg_restore on target. Parallel workers, SSL modes, table exclusions — all configured in YAML.</p>
+      </div>
+
+      <div class="fade-up rounded-2xl p-7 border border-white/6 bg-[#0c0c0c] relative overflow-hidden" style="animation-delay:.2s">
+        <span class="absolute top-4 right-5 text-8xl font-black leading-none" style="color:rgba(255,255,255,.03)">03</span>
+        <div class="w-9 h-9 rounded-xl flex items-center justify-center mb-5" style="background:rgba(48,209,88,.11)">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="#30d158" stroke-width="1.7" stroke-linecap="round"><path d="M3 8l3.5 3.5L13 5"/></svg>
+        </div>
+        <h3 class="text-white font-semibold mb-2">Sanitize</h3>
+        <p class="text-[#6e6e73] text-sm leading-relaxed">All rules in one transaction on the target. Full rollback on any error. Target database is production-safe when done.</p>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════ INSTALL ═══════════════════════════════ -->
+<section id="install" class="py-28 border-t border-white/5">
+  <div class="max-w-6xl mx-auto px-5">
+    <p class="fade-up text-xs text-[#555] uppercase tracking-widest mb-3">Get started</p>
+    <h2 class="fade-up text-[clamp(2rem,5vw,3.5rem)] font-bold text-white mb-10">Up and running<br>in seconds.</h2>
+
+    <!-- Tabs -->
+    <div class="fade-up flex gap-2 mb-5">
+      <button class="tab-btn active text-xs font-medium px-4 py-2 rounded-full border border-white/10 transition-all" data-tab="local">Local</button>
+      <button class="tab-btn text-xs font-medium px-4 py-2 rounded-full border border-white/10 transition-all" data-tab="docker">Docker</button>
+      <button class="tab-btn text-xs font-medium px-4 py-2 rounded-full border border-white/10 transition-all" data-tab="cloudrun">Cloud Run</button>
+    </div>
+
+    <!-- Window -->
+    <div class="fade-up rounded-2xl overflow-hidden border border-white/7" style="background:#080808">
+      <div class="flex items-center justify-between px-4 py-3 border-b border-white/5">
+        <div class="flex gap-1.5">
+          <span class="w-3 h-3 rounded-full bg-[#ff5f57]"></span>
+          <span class="w-3 h-3 rounded-full bg-[#febc2e]"></span>
+          <span class="w-3 h-3 rounded-full bg-[#28c840]"></span>
+        </div>
+        <button id="install-copy" class="text-xs text-[#555] hover:text-white transition-colors px-2 py-1 rounded">Copy</button>
+      </div>
+      <div class="p-5 overflow-x-auto">
+
+        <div id="tab-local">
+          <pre class="language-bash"><code class="language-bash"># Download latest binary (macOS arm64)
+curl -L https://github.com/cl8dep/DBMigrator/releases/latest/download/db-migrator-macos-arm64 \
+  -o db-migrator && chmod +x db-migrator
+
+# Copy and edit config
+cp config.example.yaml config.yaml
+
+# Validate against source DB
+SOURCE_DB_PASSWORD=... TARGET_DB_PASSWORD=... \
+  ./db-migrator validate --config config.yaml
+
+# Run full pipeline
+SOURCE_DB_PASSWORD=... TARGET_DB_PASSWORD=... \
+  ./db-migrator run --config config.yaml</code></pre>
+        </div>
+
+        <div id="tab-docker" class="hidden">
+          <pre class="language-bash"><code class="language-bash">docker build -t db-migrator .
+
+docker run --rm \
+  -e SOURCE_DB_PASSWORD=... \
+  -e TARGET_DB_PASSWORD=... \
+  -v $(pwd)/config.yaml:/app/config.yaml:ro \
+  db-migrator run --config /app/config.yaml</code></pre>
+        </div>
+
+        <div id="tab-cloudrun" class="hidden">
+          <pre class="language-bash"><code class="language-bash">gcloud run jobs create db-migrator \
+  --image gcr.io/my-project/db-migrator:latest \
+  --set-secrets SOURCE_DB_PASSWORD=source-db-pass:latest \
+  --set-secrets TARGET_DB_PASSWORD=target-db-pass:latest \
+  --args="run,--config,/secrets/config.yaml"
+
+# Execute the job
+gcloud run jobs execute db-migrator</code></pre>
+        </div>
+
+      </div>
+    </div>
+
+  </div>
+</section>
+
+<!-- ═══════════════════════════════ FOOTER ═══════════════════════════════ -->
+<footer class="border-t border-white/5 py-14">
+  <div class="max-w-6xl mx-auto px-5 flex flex-col md:flex-row items-center justify-between gap-5">
+    <div class="flex items-center gap-2 text-sm text-[#555]">
+      <svg width="16" height="16" viewBox="0 0 22 22" fill="none">
+        <rect x="1" y="6" width="8" height="10" rx="2.5" fill="#2997ff" opacity=".8"/>
+        <rect x="13" y="6" width="8" height="10" rx="2.5" fill="#bf5af2" opacity=".7"/>
+      </svg>
+      db-migrator · MIT License · C# / .NET 10
+    </div>
+    <div class="flex items-center gap-5 text-sm">
+      <a href="https://github.com/cl8dep/DBMigrator" target="_blank" class="text-[#555] hover:text-white transition-colors flex items-center gap-1.5">
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor"><path fill-rule="evenodd" d="M7 0C3.13 0 0 3.13 0 7c0 3.09 2.01 5.72 4.79 6.65.35.06.48-.15.48-.34v-1.2C3.24 12.5 2.83 11.1 2.83 11.1c-.32-.81-.78-1.02-.78-1.02-.64-.43.05-.43.05-.43.7.05 1.07.72 1.07.72.62 1.07 1.64.76 2.04.58.06-.45.24-.76.44-.93-1.55-.18-3.19-.78-3.19-3.46 0-.77.27-1.39.72-1.88-.07-.18-.31-.89.07-1.85 0 0 .59-.19 1.92.72A6.7 6.7 0 017 3.58c.59 0 1.19.08 1.75.23 1.34-.91 1.92-.72 1.92-.72.38.96.14 1.67.07 1.85.45.49.72 1.11.72 1.88 0 2.69-1.64 3.28-3.2 3.45.25.22.48.65.48 1.31v1.94c0 .19.12.41.48.34A7.01 7.01 0 0014 7c0-3.87-3.13-7-7-7z"/></svg>
+        GitHub
+      </a>
+      <a href="https://github.com/cl8dep/DBMigrator/wiki" target="_blank" class="text-[#555] hover:text-white transition-colors">Docs</a>
+      <a href="https://github.com/cl8dep/DBMigrator/releases" target="_blank" class="text-[#555] hover:text-white transition-colors">Releases</a>
+    </div>
+  </div>
+</footer>
+
+<!-- Scripts -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.2/gsap.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.2/ScrollTrigger.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-yaml.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-bash.min.js"></script>
+<script src="main.js"></script>
+
+</body>
+</html>
