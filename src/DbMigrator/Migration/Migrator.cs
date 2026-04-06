@@ -22,7 +22,7 @@ public class Migrator(ILogger<Migrator> logger)
         bool parallel = config.Dump.ParallelJobs > 1;
         var dumpPath = parallel
             ? Path.Combine(Path.GetTempPath(), $"db-migrator-dump-{Guid.NewGuid():N}")
-            : Path.Combine(Path.GetTempPath(), $"db-migrator-dump-{Guid.NewGuid():N}.dump");
+            : Path.Combine(Path.GetTempPath(), $"db-migrator-dump-{Guid.NewGuid():N}.sql");
 
         try
         {
