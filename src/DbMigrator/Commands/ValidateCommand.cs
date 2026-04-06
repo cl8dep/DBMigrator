@@ -28,7 +28,7 @@ public class ValidateCommand(IServiceProvider services) : AsyncCommand<BaseSetti
         }
         catch (Exception ex)
         {
-            AnsiConsole.MarkupLine($"[red]✗ Fatal error:[/] {Markup.Escape(ex.Message)}");
+            CommandHelpers.PrintError(ex, settings);
             return 1;
         }
     }

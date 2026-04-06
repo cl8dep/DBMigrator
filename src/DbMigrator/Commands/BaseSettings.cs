@@ -31,5 +31,9 @@ public class BaseSettings : CommandSettings
     [Description("Print the pg_dump / pg_restore command arguments before executing")]
     public bool PrintArgs { get; set; }
 
-    public bool IsDebug => LogLevel.Equals("debug", StringComparison.OrdinalIgnoreCase);
+    [CommandOption("--verbose|-v")]
+    [Description("Shorthand for --log-level debug")]
+    public bool Verbose { get; set; }
+
+    public bool IsDebug => Verbose || LogLevel.Equals("debug", StringComparison.OrdinalIgnoreCase);
 }

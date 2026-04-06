@@ -111,11 +111,11 @@ public static class ConfigLoader
                     errors.Add($"Unknown strategy '{col.Strategy}' for column '{rule.Table}.{col.Name}'. " +
                                $"Valid values: {string.Join(", ", KnownStrategies)}");
 
-                if (col.Strategy.Equals("faker", StringComparison.OrdinalIgnoreCase) &&
+                if (string.Equals(col.Strategy, "faker", StringComparison.OrdinalIgnoreCase) &&
                     string.IsNullOrWhiteSpace(col.Faker))
                     errors.Add($"Column '{rule.Table}.{col.Name}' uses strategy 'faker' but 'faker' field is missing");
 
-                if (col.Strategy.Equals("template", StringComparison.OrdinalIgnoreCase) &&
+                if (string.Equals(col.Strategy, "template", StringComparison.OrdinalIgnoreCase) &&
                     string.IsNullOrWhiteSpace(col.Value))
                     errors.Add($"Column '{rule.Table}.{col.Name}' uses strategy 'template' but 'value' field is missing");
             }

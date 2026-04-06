@@ -61,6 +61,13 @@ internal static class CommandHelpers
         return true;
     }
 
+    public static void PrintError(Exception ex, BaseSettings settings)
+    {
+        AnsiConsole.MarkupLine($"[red]✗ Fatal error:[/] {Markup.Escape(ex.Message)}");
+        if (settings.IsDebug)
+            AnsiConsole.MarkupLine($"[grey]{Markup.Escape(ex.ToString())}[/]");
+    }
+
     public static void PrintReport(Sanitization.SanitizationReport report)
     {
         var table = new Table()
