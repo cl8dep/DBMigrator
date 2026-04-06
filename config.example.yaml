@@ -1,0 +1,93 @@
+# db-migrator configuration example
+# All string values support ${ENV_VAR} interpolation.
+
+migration:
+  source:
+    host: "source-db.example.com"
+    port: 5432
+    database: "mydb"
+    user: "postgres"
+    password: "${SOURCE_DB_PASSWORD}"
+
+  target:
+    host: "target-db.example.com"
+    port: 5432
+    database: "mydb_sanitized"
+    user: "postgres"
+    password: "${TARGET_DB_PASSWORD}"
+
+  dump:
+    # Tables to exclude from the dump entirely
+    exclude_tables:
+      - audit_logs
+      - sessions
+    # Set to true to dump only the schema (no data)
+    schema_only: false
+    # Extra flags passed verbatim to pg_dump
+    extra_pg_dump_args: []
+
+# Sanitization rules applied to the TARGET database after restore.
+# Each rule targets a table and declares which columns to sanitize and how.
+sanitize:
+  - table: users
+    # Optional WHERE clause to limit which rows are affected
+    # where: "role != 'admin'"
+    columns:
+      # strategy: static — every row gets the same fixed value
+      - name: password_hash
+        strategy: static
+        value: "$2b$10$REDACTED_HASH_FOR_ALL_USERS"
+
+      # strategy: template — use {column_name} to reference other columns per row
+      # Builds as SQL: 'user_' || id::text || '@redacted.local'
+      - name: email
+        strategy: template
+        value: "user_{id}@redacted.local"
+
+      # strategy: faker — generate realistic fake data using Bogus
+      # Available faker methods:
+      #   first_name, last_name, full_name, email, user_name, phone,
+      #   address, street_address, city, country, zip_code, company,
+      #   lorem, paragraph, url, ip_address, uuid, random_number,
+      #   random_double, digits_as_integer, date, datetime, color,
+      #   product, price, iban, credit_card, ssn
+      - name: first_name
+        strategy: faker
+        faker: first_name
+
+      - name: last_name
+        strategy: faker
+        faker: last_name
+
+      - name: phone
+        strategy: faker
+        faker: phone
+
+      # strategy: null_value — set the column to NULL
+      # Only valid for nullable columns (validated pre-execution).
+      - name: avatar_url
+        strategy: null_value
+
+      # strategy: hash — SHA256 of original value (deterministic, good for FK integrity)
+      # Uses pure SQL: encode(sha256(column::text::bytea), 'hex')
+      - name: national_id
+        strategy: hash
+
+  - table: orders
+    columns:
+      - name: billing_address
+        strategy: faker
+        faker: address
+
+      - name: notes
+        strategy: static
+        value: "REDACTED"
+
+  - table: payments
+    columns:
+      - name: card_number
+        strategy: hash
+
+      - name: card_holder_name
+        strategy: faker
+        faker: full_name

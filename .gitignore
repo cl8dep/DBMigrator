@@ -1,0 +1,38 @@
+# .NET
+bin/
+obj/
+*.user
+*.suo
+.vs/
+*.ncrunch*
+.idea/
+
+# Build output
+out/
+publish/
+
+# Coverage
+coverage*/
+TestResults/
+*.cobertura.xml
+
+# Secrets — never commit these
+config.yaml
+*.env
+.env
+secrets/
+
+# Keep the example
+!config.example.yaml
+
+# Temp files
+*.tmp
+*.dump
+*.bak
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker
+.docker/

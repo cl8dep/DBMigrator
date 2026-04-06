@@ -1,0 +1,55 @@
+services:
+  # Source database — contains the "production" data to migrate from
+  source-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: mydb
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: sourcepass
+    ports:
+      - "5433:5432"
+    volumes:
+      - source-db-data:/var/lib/postgresql/data
+      - ./scripts/seed-source.sql:/docker-entrypoint-initdb.d/seed.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d mydb"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Target database — where the sanitized copy lands
+  target-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: mydb_sanitized
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: targetpass
+    ports:
+      - "5434:5432"
+    volumes:
+      - target-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d mydb_sanitized"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # The migrator — runs once and exits
+  migrator:
+    build: .
+    depends_on:
+      source-db:
+        condition: service_healthy
+      target-db:
+        condition: service_healthy
+    environment:
+      SOURCE_DB_PASSWORD: sourcepass
+      TARGET_DB_PASSWORD: targetpass
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro
+    command: ["run", "--config", "/app/config.yaml"]
+    restart: "no"
+
+volumes:
+  source-db-data:
+  target-db-data:
