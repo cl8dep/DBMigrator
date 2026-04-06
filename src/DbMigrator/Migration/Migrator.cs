@@ -26,7 +26,7 @@ public class Migrator(ILogger<Migrator> logger)
 
         try
         {
-            await RunPreflightChecksAsync(config.Source, ct);
+            await RunPreflightChecksAsync(config, ct);
 
             logger.LogInformation("Starting dump from {Database}@{Host}:{Port}",
                 config.Source.Database, config.Source.Host, config.Source.Port);
@@ -155,15 +155,41 @@ public class Migrator(ILogger<Migrator> logger)
         return args;
     }
 
-    private static async Task RunPreflightChecksAsync(DbConfig source, CancellationToken ct)
+    private static async Task RunPreflightChecksAsync(MigrationConfig config, CancellationToken ct)
     {
-        AnsiConsole.MarkupLine("[grey]Running pre-flight checks on source DB...[/]");
+        AnsiConsole.MarkupLine("[grey]Running pre-flight checks...[/]");
 
-        await using var conn = new NpgsqlConnection(source.ToConnectionString());
-        await conn.OpenAsync(ct);
+        // ── 1. Connectivity: source ──────────────────────────────────────────
+        await using var sourceConn = new NpgsqlConnection(config.Source.ToConnectionString());
+        try
+        {
+            await sourceConn.OpenAsync(ct);
+            AnsiConsole.MarkupLine(
+                $"[grey]✓ Source DB reachable:[/] {config.Source.Database}@{config.Source.Host}:{config.Source.Port}");
+        }
+        catch (Exception ex)
+        {
+            throw new InvalidOperationException(
+                $"Cannot connect to source DB ({config.Source.Database}@{config.Source.Host}:{config.Source.Port}): {ex.Message}", ex);
+        }
 
-        // 1. Idle-in-transaction connections — these block pg_dump acquiring table locks
-        await using (var cmd = conn.CreateCommand())
+        // ── 2. Connectivity: target ──────────────────────────────────────────
+        await using var targetConn = new NpgsqlConnection(config.Target.ToConnectionString());
+        try
+        {
+            await targetConn.OpenAsync(ct);
+            AnsiConsole.MarkupLine(
+                $"[grey]✓ Target DB reachable:[/] {config.Target.Database}@{config.Target.Host}:{config.Target.Port}");
+        }
+        catch (Exception ex)
+        {
+            throw new InvalidOperationException(
+                $"Cannot connect to target DB ({config.Target.Database}@{config.Target.Host}:{config.Target.Port}): {ex.Message}", ex);
+        }
+
+        // ── 3. Idle-in-transaction connections on source ─────────────────────
+        // These hold table locks and will cause pg_dump to hang.
+        await using (var cmd = sourceConn.CreateCommand())
         {
             cmd.CommandText = """
                 SELECT count(*), max(now() - query_start)
@@ -187,8 +213,8 @@ public class Migrator(ILogger<Migrator> logger)
             }
         }
 
-        // 2. Ungranted locks — another sign of contention
-        await using (var cmd = conn.CreateCommand())
+        // ── 4. Ungranted locks on source ─────────────────────────────────────
+        await using (var cmd = sourceConn.CreateCommand())
         {
             cmd.CommandText = """
                 SELECT count(*)
