@@ -37,6 +37,6 @@ USER dbmigrator
 
 LABEL org.opencontainers.image.title="db-migrator" \
       org.opencontainers.image.description="PostgreSQL database migrator and sanitizer" \
-      org.opencontainers.image.source="https://github.com/your-org/database-migrator-and-sanitizer"
+      org.opencontainers.image.source="https://github.com/cl8dep/DBMigrator"
 
 ENTRYPOINT ["dotnet", "db-migrator.dll"]
