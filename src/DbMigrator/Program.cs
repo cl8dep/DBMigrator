@@ -7,6 +7,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Serilog;
 using Serilog.Events;
+using Spectre.Console;
 using Spectre.Console.Cli;
 
 // Parse log level early from args before DI is built
@@ -21,6 +22,13 @@ var serilogLevel = logLevel.ToLowerInvariant() switch
     "error" => LogEventLevel.Error,
     _       => LogEventLevel.Information
 };
+
+// Disable ANSI colors if --no-color flag or NO_COLOR env var is set (https://no-color.org/)
+var noColor = args.Contains("--no-color")
+    || !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("NO_COLOR"));
+
+if (noColor)
+    AnsiConsole.Profile.Capabilities.Ansi = false;
 
 Log.Logger = new LoggerConfiguration()
     .MinimumLevel.Is(serilogLevel)

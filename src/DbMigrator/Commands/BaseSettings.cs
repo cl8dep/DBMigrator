@@ -35,5 +35,9 @@ public class BaseSettings : CommandSettings
     [Description("Shorthand for --log-level debug")]
     public bool Verbose { get; set; }
 
+    [CommandOption("--no-color")]
+    [Description("Disable ANSI color codes in output (also respected via NO_COLOR env var)")]
+    public bool NoColor { get; set; }
+
     public bool IsDebug => Verbose || LogLevel.Equals("debug", StringComparison.OrdinalIgnoreCase);
 }
