@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using DbMigrator.Config;
 using Microsoft.Extensions.Logging;
+using Spectre.Console;
 
 namespace DbMigrator.Migration;
 
@@ -11,66 +12,95 @@ public class Migrator(ILogger<Migrator> logger)
 
     public async Task RunAsync(MigrationConfig config, CancellationToken ct = default)
     {
-        var dumpPath = Path.Combine(Path.GetTempPath(), $"db-migrator-dump-{Guid.NewGuid():N}.dump");
+        bool parallel = config.Dump.ParallelJobs > 1;
+        var dumpPath = parallel
+            ? Path.Combine(Path.GetTempPath(), $"db-migrator-dump-{Guid.NewGuid():N}")
+            : Path.Combine(Path.GetTempPath(), $"db-migrator-dump-{Guid.NewGuid():N}.dump");
 
         try
         {
             logger.LogInformation("Starting dump from {Database}@{Host}:{Port}",
                 config.Source.Database, config.Source.Host, config.Source.Port);
 
-            await DumpAsync(config, dumpPath, ct);
+            var sw = Stopwatch.StartNew();
+            await AnsiConsole.Status()
+                .Spinner(Spinner.Known.Dots)
+                .SpinnerStyle(Style.Parse("cyan"))
+                .StartAsync(
+                    $"[cyan]pg_dump[/] {config.Source.Database}@{config.Source.Host}:{config.Source.Port} ...",
+                    async ctx =>
+                    {
+                        await DumpAsync(config, dumpPath,
+                            line => ctx.Status($"[cyan]pg_dump[/] {Markup.Escape(Truncate(line))}"),
+                            ct);
+                    });
+            sw.Stop();
 
-            logger.LogInformation("Dump completed ({Size} bytes). Starting restore to {Database}@{Host}:{Port}",
-                new FileInfo(dumpPath).Length,
-                config.Target.Database, config.Target.Host, config.Target.Port);
+            long dumpSize = parallel
+                ? new DirectoryInfo(dumpPath).EnumerateFiles("*", SearchOption.AllDirectories).Sum(f => f.Length)
+                : new FileInfo(dumpPath).Length;
 
-            await RestoreAsync(config, dumpPath, ct);
+            logger.LogInformation(
+                "Dump completed in {Elapsed:g} ({Size:N0} bytes). Restoring to {Database}@{Host}:{Port}",
+                sw.Elapsed, dumpSize, config.Target.Database, config.Target.Host, config.Target.Port);
 
-            logger.LogInformation("Restore completed successfully");
+            sw.Restart();
+            await AnsiConsole.Status()
+                .Spinner(Spinner.Known.Dots)
+                .SpinnerStyle(Style.Parse("cyan"))
+                .StartAsync(
+                    $"[cyan]pg_restore[/] → {config.Target.Database}@{config.Target.Host}:{config.Target.Port} ...",
+                    async ctx =>
+                    {
+                        await RestoreAsync(config, dumpPath,
+                            line => ctx.Status($"[cyan]pg_restore[/] {Markup.Escape(Truncate(line))}"),
+                            ct);
+                    });
+            sw.Stop();
+
+            logger.LogInformation("Restore completed in {Elapsed:g}", sw.Elapsed);
         }
         finally
         {
-            if (File.Exists(dumpPath))
-            {
-                File.Delete(dumpPath);
-                logger.LogDebug("Temp dump file deleted: {Path}", dumpPath);
-            }
+            CleanupDump(dumpPath, parallel);
         }
     }
 
-    private async Task DumpAsync(MigrationConfig config, string dumpPath, CancellationToken ct)
+    private async Task DumpAsync(
+        MigrationConfig config, string dumpPath, Action<string> onProgress, CancellationToken ct)
     {
         var args = BuildPgDumpArgs(config, dumpPath);
-        var env = new Dictionary<string, string>
-        {
-            ["PGPASSWORD"] = config.Source.Password
-        };
-
-        await RunProcessAsync("pg_dump", args, env, ct);
+        var env = new Dictionary<string, string> { ["PGPASSWORD"] = config.Source.Password };
+        await RunProcessAsync("pg_dump", args, env, onProgress, ct);
     }
 
-    private async Task RestoreAsync(MigrationConfig config, string dumpPath, CancellationToken ct)
+    private async Task RestoreAsync(
+        MigrationConfig config, string dumpPath, Action<string> onProgress, CancellationToken ct)
     {
         var args = BuildPgRestoreArgs(config, dumpPath);
-        var env = new Dictionary<string, string>
-        {
-            ["PGPASSWORD"] = config.Target.Password
-        };
-
-        await RunProcessAsync("pg_restore", args, env, ct);
+        var env = new Dictionary<string, string> { ["PGPASSWORD"] = config.Target.Password };
+        await RunProcessAsync("pg_restore", args, env, onProgress, ct);
     }
 
     public static List<string> BuildPgDumpArgs(MigrationConfig config, string dumpPath)
     {
+        bool parallel = config.Dump.ParallelJobs > 1;
         var args = new List<string>
         {
-            "--host", config.Source.Host,
-            "--port", config.Source.Port.ToString(),
+            "--host",     config.Source.Host,
+            "--port",     config.Source.Port.ToString(),
             "--username", config.Source.User,
-            "--format", "custom",
+            "--format",   parallel ? "directory" : "custom",
+            "--verbose",
             "--no-password",
-            "--file", dumpPath
+            "--file",     dumpPath
         };
+
+        if (parallel)
+        {
+            args.Add("--jobs");
+            args.Add(config.Dump.ParallelJobs.ToString());
+        }
 
         if (config.Dump.SchemaOnly)
             args.Add("--schema-only");
@@ -89,25 +119,55 @@ public class Migrator(ILogger<Migrator> logger)
 
     public static List<string> BuildPgRestoreArgs(MigrationConfig config, string dumpPath)
     {
+        bool parallel = config.Dump.ParallelJobs > 1;
         var args = new List<string>
         {
-            "--host", config.Target.Host,
-            "--port", config.Target.Port.ToString(),
+            "--host",     config.Target.Host,
+            "--port",     config.Target.Port.ToString(),
             "--username", config.Target.User,
-            "--dbname", config.Target.Database,
+            "--dbname",   config.Target.Database,
             "--no-password",
             "--clean",
             "--if-exists",
-            dumpPath
+            "--verbose"
         };
 
+        if (parallel)
+        {
+            args.Add("--jobs");
+            args.Add(config.Dump.ParallelJobs.ToString());
+        }
+
+        args.Add(dumpPath);
         return args;
+    }
+
+    private void CleanupDump(string dumpPath, bool isDirectory)
+    {
+        try
+        {
+            if (isDirectory && Directory.Exists(dumpPath))
+            {
+                Directory.Delete(dumpPath, recursive: true);
+                logger.LogDebug("Temp dump directory deleted: {Path}", dumpPath);
+            }
+            else if (!isDirectory && File.Exists(dumpPath))
+            {
+                File.Delete(dumpPath);
+                logger.LogDebug("Temp dump file deleted: {Path}", dumpPath);
+            }
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to delete temp dump at {Path} — you may need to remove it manually", dumpPath);
+        }
     }
 
     private async Task RunProcessAsync(
         string executable,
         List<string> args,
         Dictionary<string, string> env,
+        Action<string> onStderrLine,
         CancellationToken ct)
     {
         var psi = new ProcessStartInfo
@@ -133,10 +193,15 @@ public class Migrator(ILogger<Migrator> logger)
                 logger.LogDebug("[{Exe}] {Line}", executable, e.Data);
         };
 
+        // pg_dump / pg_restore write progress to stderr when --verbose is set.
+        // Stream each line to the spinner callback so the user sees live progress.
         process.ErrorDataReceived += (_, e) =>
         {
-            if (e.Data is not null)
-                logger.LogWarning("[{Exe}] {Line}", executable, e.Data);
+            if (e.Data is { Length: > 0 })
+            {
+                logger.LogDebug("[{Exe}] {Line}", executable, e.Data);
+                onStderrLine(e.Data);
+            }
         };
 
         process.Start();
@@ -159,7 +224,9 @@ public class Migrator(ILogger<Migrator> logger)
 
         if (process.ExitCode != 0)
             throw new InvalidOperationException(
-                $"'{executable}' exited with code {process.ExitCode}. " +
-                "Check the logs above for details.");
+                $"'{executable}' exited with code {process.ExitCode}. Check the logs above for details.");
     }
+
+    private static string Truncate(string line) =>
+        line.Length > 90 ? string.Concat(line.AsSpan(0, 90), "…") : line;
 }

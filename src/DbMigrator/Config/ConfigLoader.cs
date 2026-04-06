@@ -80,6 +80,9 @@ public static class ConfigLoader
                        "this would overwrite your source data. Use different databases.");
         }
 
+        if (config.Migration.Dump.ParallelJobs < 1)
+            errors.Add("migration.dump.parallel_jobs must be >= 1 (default is 1 for single-threaded)");
+
         foreach (var rule in config.Sanitize)
         {
             if (string.IsNullOrWhiteSpace(rule.Table))

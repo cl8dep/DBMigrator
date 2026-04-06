@@ -17,7 +17,8 @@ public class MigratorArgBuilderTests
         string tgtUser = "postgres",
         bool schemaOnly = false,
         string[]? excludeTables = null,
-        string[]? extraArgs = null) =>
+        string[]? extraArgs = null,
+        int parallelJobs = 1) =>
         new()
         {
             Source = new DbConfig { Host = srcHost, Port = srcPort, Database = srcDb, User = srcUser },
@@ -26,7 +27,8 @@ public class MigratorArgBuilderTests
             {
                 SchemaOnly = schemaOnly,
                 ExcludeTables = [.. (excludeTables ?? [])],
-                ExtraPgDumpArgs = [.. (extraArgs ?? [])]
+                ExtraPgDumpArgs = [.. (extraArgs ?? [])],
+                ParallelJobs = parallelJobs
             }
         };
 
@@ -42,6 +44,7 @@ public class MigratorArgBuilderTests
         args.Should().Contain("--port").And.Contain("5433");
         args.Should().Contain("--username").And.Contain("admin");
         args.Should().Contain("--format").And.Contain("custom");
+        args.Should().Contain("--verbose");
         args.Should().Contain("--no-password");
         args.Should().Contain("--file").And.Contain("/tmp/dump.dump");
         args.Should().Contain("mydb"); // database name always last
@@ -85,14 +88,14 @@ public class MigratorArgBuilderTests
     [Fact]
     public void BuildPgDumpArgs_ExtraArgsAppendedBeforeDatabase()
     {
-        var config = MakeConfig(srcDb: "mydb", extraArgs: ["--verbose", "--lock-wait-timeout=30s"]);
+        var config = MakeConfig(srcDb: "mydb", extraArgs: ["--lock-wait-timeout=30s"]);
         var args = Migrator.BuildPgDumpArgs(config, "/tmp/dump.dump");
 
-        var verboseIndex = args.IndexOf("--verbose");
+        var extraIndex = args.IndexOf("--lock-wait-timeout=30s");
         var dbIndex = args.IndexOf("mydb");
 
-        verboseIndex.Should().BeGreaterThan(0, "extra args should be present");
-        verboseIndex.Should().BeLessThan(dbIndex, "extra args should come before the database name");
+        extraIndex.Should().BeGreaterThan(0, "extra args should be present");
+        extraIndex.Should().BeLessThan(dbIndex, "extra args should come before the database name");
     }
 
     [Fact]
@@ -103,6 +106,38 @@ public class MigratorArgBuilderTests
 
         args.Should().NotContain("--schema-only");
         args.Should().NotContain("--exclude-table");
+    }
+
+    [Fact]
+    public void BuildPgDumpArgs_ParallelJobs_UsesDirectoryFormat()
+    {
+        var config = MakeConfig(parallelJobs: 4);
+        var args = Migrator.BuildPgDumpArgs(config, "/tmp/dump-dir");
+
+        var formatIndex = args.IndexOf("--format");
+        args[formatIndex + 1].Should().Be("directory");
+    }
+
+    [Fact]
+    public void BuildPgDumpArgs_ParallelJobs_AddsJobsFlag()
+    {
+        var config = MakeConfig(parallelJobs: 4);
+        var args = Migrator.BuildPgDumpArgs(config, "/tmp/dump-dir");
+
+        var jobsIndex = args.IndexOf("--jobs");
+        jobsIndex.Should().BeGreaterThan(0);
+        args[jobsIndex + 1].Should().Be("4");
+    }
+
+    [Fact]
+    public void BuildPgDumpArgs_SingleJob_UsesCustomFormat_NoJobsFlag()
+    {
+        var config = MakeConfig(parallelJobs: 1);
+        var args = Migrator.BuildPgDumpArgs(config, "/tmp/dump.dump");
+
+        var formatIndex = args.IndexOf("--format");
+        args[formatIndex + 1].Should().Be("custom");
+        args.Should().NotContain("--jobs");
     }
 
     // ── BuildPgRestoreArgs ───────────────────────────────────────────
@@ -120,6 +155,7 @@ public class MigratorArgBuilderTests
         args.Should().Contain("--no-password");
         args.Should().Contain("--clean");
         args.Should().Contain("--if-exists");
+        args.Should().Contain("--verbose");
         args.Should().Contain("/tmp/dump.dump");
     }
 
@@ -141,5 +177,33 @@ public class MigratorArgBuilderTests
         // --clean + --if-exists together ensures restore works on non-empty target
         args.Should().Contain("--clean");
         args.Should().Contain("--if-exists");
+    }
+
+    [Fact]
+    public void BuildPgRestoreArgs_ParallelJobs_AddsJobsFlag()
+    {
+        var config = MakeConfig(parallelJobs: 4);
+        var args = Migrator.BuildPgRestoreArgs(config, "/tmp/dump-dir");
+
+        var jobsIndex = args.IndexOf("--jobs");
+        jobsIndex.Should().BeGreaterThan(0);
+        args[jobsIndex + 1].Should().Be("4");
+    }
+
+    [Fact]
+    public void BuildPgRestoreArgs_ParallelJobs_DumpPathStillLast()
+    {
+        var dumpPath = "/tmp/dump-dir";
+        var config = MakeConfig(parallelJobs: 4);
+        var args = Migrator.BuildPgRestoreArgs(config, dumpPath);
+        args.Last().Should().Be(dumpPath, "dump path must always be the final argument");
+    }
+
+    [Fact]
+    public void BuildPgRestoreArgs_SingleJob_NoJobsFlag()
+    {
+        var config = MakeConfig(parallelJobs: 1);
+        var args = Migrator.BuildPgRestoreArgs(config, "/tmp/dump.dump");
+        args.Should().NotContain("--jobs");
     }
 }

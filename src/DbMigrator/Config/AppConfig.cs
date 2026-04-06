@@ -66,6 +66,14 @@ public class DumpConfig
 
     [YamlMember(Alias = "extra_pg_dump_args")]
     public List<string> ExtraPgDumpArgs { get; set; } = [];
+
+    /// <summary>
+    /// Number of parallel workers for pg_dump / pg_restore (-j N).
+    /// When > 1, format is automatically switched to "directory".
+    /// Default: 1 (single-threaded).
+    /// </summary>
+    [YamlMember(Alias = "parallel_jobs")]
+    public int ParallelJobs { get; set; } = 1;
 }
 
 public class SanitizeRule
