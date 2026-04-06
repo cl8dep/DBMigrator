@@ -210,14 +210,13 @@ public class Migrator(ILogger<Migrator> logger)
         };
 
         // pg_dump / pg_restore write progress to stderr when --verbose is set.
-        // Stream each line to the spinner callback so the user sees live progress.
+        // Route lines to the spinner callback only — do NOT also call logger.LogDebug here,
+        // because Serilog writes directly to stdout and conflicts with Spectre.Console's
+        // cursor management, producing a visual gap in the output.
         process.ErrorDataReceived += (_, e) =>
         {
             if (e.Data is { Length: > 0 })
-            {
-                logger.LogDebug("[{Exe}] {Line}", executable, e.Data);
                 onStderrLine(e.Data);
-            }
         };
 
         process.Start();
