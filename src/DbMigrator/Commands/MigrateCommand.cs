@@ -14,16 +14,16 @@ public class MigrateCommand(IServiceProvider services) : AsyncCommand<BaseSettin
         {
             var config = CommandHelpers.LoadAndValidateConfig(settings);
 
-            var validator = services.GetRequiredService<SchemaValidator>();
-            var ok = await CommandHelpers.RunSchemaValidationAsync(config, settings, validator, cancellationToken);
-            if (!ok) return 1;
-
             if (settings.PreflightOnly)
             {
                 await Migrator.RunPreflightChecksAsync(config.Migration, cancellationToken);
                 AnsiConsole.MarkupLine("[green]✓ Pre-flight checks passed[/]");
                 return 0;
             }
+
+            var validator = services.GetRequiredService<SchemaValidator>();
+            var ok = await CommandHelpers.RunSchemaValidationAsync(config, settings, validator, cancellationToken);
+            if (!ok) return 1;
 
             if (settings.DryRun)
             {
