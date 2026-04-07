@@ -18,44 +18,79 @@ public class Migrator(ILogger<Migrator> logger)
     /// <summary>Print the full argument list for each subprocess before executing.</summary>
     public bool PrintArgs { get; set; }
 
-    public async Task RunAsync(MigrationConfig config, CancellationToken ct = default)
+    public async Task RunAsync(MigrationConfig config, string? dumpDirOverride = null, CancellationToken ct = default)
     {
-        bool parallel = config.Dump.ParallelJobs > 1;
-        var dumpPath = parallel
-            ? Path.Combine(Path.GetTempPath(), $"db-migrator-dump-{Guid.NewGuid():N}")
-            : Path.Combine(Path.GetTempPath(), $"db-migrator-dump-{Guid.NewGuid():N}.sql");
+        // Resolve dump directory: CLI flag > config > temp
+        // When a persistent dump dir is used we always use directory format (required for toc.dat detection).
+        var persistentDumpDir = dumpDirOverride ?? config.Dump.DumpDir;
+        bool persistent = persistentDumpDir is not null;
+        bool parallel = persistent || config.Dump.ParallelJobs > 1;
+
+        var dumpPath = persistent
+            ? persistentDumpDir!
+            : parallel
+                ? Path.Combine(Path.GetTempPath(), $"db-migrator-dump-{Guid.NewGuid():N}")
+                : Path.Combine(Path.GetTempPath(), $"db-migrator-dump-{Guid.NewGuid():N}.sql");
 
         try
         {
-            logger.LogInformation("Starting dump from {Database}@{Host}:{Port}",
-                config.Source.Database, config.Source.Host, config.Source.Port);
-
-            var sw = Stopwatch.StartNew();
-            await AnsiConsole.Status()
-                .Spinner(Spinner.Known.Dots)
-                .SpinnerStyle(Style.Parse("cyan"))
-                .StartAsync(
-                    $"[cyan]pg_dump[/] {config.Source.Database}@{config.Source.Host}:{config.Source.Port} ...",
-                    async ctx =>
+            // ── Dump ────────────────────────────────────────────────────────
+            if (persistent && IsValidDump(dumpPath))
+            {
+                var existingSize = new DirectoryInfo(dumpPath)
+                    .EnumerateFiles("*", SearchOption.AllDirectories).Sum(f => f.Length);
+                AnsiConsole.MarkupLine(
+                    $"[yellow]⚡ Reusing existing dump[/] at [cyan]{dumpPath}[/] ({existingSize:N0} bytes) — skipping pg_dump");
+                logger.LogInformation("Reusing existing dump at {Path} ({Size:N0} bytes) — skipping pg_dump",
+                    dumpPath, existingSize);
+            }
+            else
+            {
+                if (persistent)
+                {
+                    // Previous dump in this dir was invalid/partial — clean it up before retrying
+                    if (Directory.Exists(dumpPath))
                     {
-                        await DumpAsync(config, dumpPath,
-                            line => ctx.Status($"[cyan]pg_dump[/] {Markup.Escape(Truncate(line))}"),
-                            ct);
-                    });
-            sw.Stop();
+                        AnsiConsole.MarkupLine($"[yellow]⚠ Stale dump found at {dumpPath} — removing before re-dump[/]");
+                        Directory.Delete(dumpPath, recursive: true);
+                    }
+                    Directory.CreateDirectory(dumpPath);
+                }
 
-            long dumpSize = parallel
-                ? new DirectoryInfo(dumpPath).EnumerateFiles("*", SearchOption.AllDirectories).Sum(f => f.Length)
-                : new FileInfo(dumpPath).Length;
+                logger.LogInformation("Starting dump from {Database}@{Host}:{Port}",
+                    config.Source.Database, config.Source.Host, config.Source.Port);
 
-            AnsiConsole.MarkupLine(
-                $"[green]✓ Dump completed[/] in {sw.Elapsed:g} ({dumpSize:N0} bytes)");
-            logger.LogInformation("Dump completed in {Elapsed:g} ({Size:N0} bytes)", sw.Elapsed, dumpSize);
+                var sw = Stopwatch.StartNew();
+                await AnsiConsole.Status()
+                    .Spinner(Spinner.Known.Dots)
+                    .SpinnerStyle(Style.Parse("cyan"))
+                    .StartAsync(
+                        $"[cyan]pg_dump[/] {config.Source.Database}@{config.Source.Host}:{config.Source.Port} ...",
+                        async ctx =>
+                        {
+                            await DumpAsync(config, dumpPath, parallel,
+                                line => ctx.Status($"[cyan]pg_dump[/] {Markup.Escape(Truncate(line))}"),
+                                ct);
+                        });
+                sw.Stop();
 
+                long dumpSize = parallel
+                    ? new DirectoryInfo(dumpPath).EnumerateFiles("*", SearchOption.AllDirectories).Sum(f => f.Length)
+                    : new FileInfo(dumpPath).Length;
+
+                AnsiConsole.MarkupLine(
+                    $"[green]✓ Dump completed[/] in {sw.Elapsed:g} ({dumpSize:N0} bytes)");
+                logger.LogInformation("Dump completed in {Elapsed:g} ({Size:N0} bytes)", sw.Elapsed, dumpSize);
+
+                if (persistent)
+                    AnsiConsole.MarkupLine($"[grey]  Dump persisted at {dumpPath}[/]");
+            }
+
+            // ── Restore ─────────────────────────────────────────────────────
             logger.LogInformation("Starting restore to {Database}@{Host}:{Port}",
                 config.Target.Database, config.Target.Host, config.Target.Port);
 
-            sw.Restart();
+            var restoreSw = Stopwatch.StartNew();
             await AnsiConsole.Status()
                 .Spinner(Spinner.Known.Dots)
                 .SpinnerStyle(Style.Parse("cyan"))
@@ -63,38 +98,46 @@ public class Migrator(ILogger<Migrator> logger)
                     $"[cyan]pg_restore[/] → {config.Target.Database}@{config.Target.Host}:{config.Target.Port} ...",
                     async ctx =>
                     {
-                        await RestoreAsync(config, dumpPath,
+                        await RestoreAsync(config, dumpPath, parallel,
                             line => ctx.Status($"[cyan]pg_restore[/] {Markup.Escape(Truncate(line))}"),
                             ct);
                     });
-            sw.Stop();
+            restoreSw.Stop();
 
-            AnsiConsole.MarkupLine($"[green]✓ Restore completed[/] in {sw.Elapsed:g}");
-            logger.LogInformation("Restore completed in {Elapsed:g}", sw.Elapsed);
+            AnsiConsole.MarkupLine($"[green]✓ Restore completed[/] in {restoreSw.Elapsed:g}");
+            logger.LogInformation("Restore completed in {Elapsed:g}", restoreSw.Elapsed);
         }
         finally
         {
-            CleanupDump(dumpPath, parallel);
+            // Only delete the dump if it's in a temp directory — persistent dumps survive for reuse
+            if (!persistent)
+                CleanupDump(dumpPath, parallel);
         }
     }
 
+    /// <summary>A directory format dump is valid when toc.dat is present and non-empty.</summary>
+    private static bool IsValidDump(string path) =>
+        Directory.Exists(path) &&
+        File.Exists(Path.Combine(path, "toc.dat")) &&
+        new FileInfo(Path.Combine(path, "toc.dat")).Length > 0;
+
     private async Task DumpAsync(
-        MigrationConfig config, string dumpPath, Action<string> onProgress, CancellationToken ct)
+        MigrationConfig config, string dumpPath, bool useDirectoryFormat, Action<string> onProgress, CancellationToken ct)
     {
-        var args = BuildPgDumpArgs(config, dumpPath, Verbose);
+        var args = BuildPgDumpArgs(config, dumpPath, useDirectoryFormat, Verbose);
         var env = new Dictionary<string, string> { ["PGPASSWORD"] = config.Source.Password };
         await RunProcessAsync("pg_dump", args, env, onProgress, ct);
     }
 
     private async Task RestoreAsync(
-        MigrationConfig config, string dumpPath, Action<string> onProgress, CancellationToken ct)
+        MigrationConfig config, string dumpPath, bool useDirectoryFormat, Action<string> onProgress, CancellationToken ct)
     {
-        var args = BuildPgRestoreArgs(config, dumpPath, Verbose);
+        var args = BuildPgRestoreArgs(config, dumpPath, useDirectoryFormat, Verbose);
         var env = new Dictionary<string, string> { ["PGPASSWORD"] = config.Target.Password };
         await RunProcessAsync("pg_restore", args, env, onProgress, ct);
     }
 
-    public static List<string> BuildPgDumpArgs(MigrationConfig config, string dumpPath, bool verbose = false)
+    public static List<string> BuildPgDumpArgs(MigrationConfig config, string dumpPath, bool directoryFormat, bool verbose = false)
     {
         bool parallel = config.Dump.ParallelJobs > 1;
         var args = new List<string>
@@ -102,7 +145,7 @@ public class Migrator(ILogger<Migrator> logger)
             "--host",     config.Source.Host,
             "--port",     config.Source.Port.ToString(),
             "--username", config.Source.User,
-            "--format",   parallel ? "directory" : "custom",
+            "--format",   directoryFormat ? "directory" : "custom",
             "--no-password",
             "--file",     dumpPath
         };
@@ -131,9 +174,9 @@ public class Migrator(ILogger<Migrator> logger)
         return args;
     }
 
-    public static List<string> BuildPgRestoreArgs(MigrationConfig config, string dumpPath, bool verbose = false)
+    public static List<string> BuildPgRestoreArgs(MigrationConfig config, string dumpPath, bool directoryFormat, bool verbose = false)
     {
-        bool parallel = config.Dump.ParallelJobs > 1;
+        bool parallel = directoryFormat && config.Dump.ParallelJobs > 1;
         var args = new List<string>
         {
             "--host",     config.Target.Host,

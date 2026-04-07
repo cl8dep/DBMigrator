@@ -74,6 +74,17 @@ public class DumpConfig
     /// </summary>
     [YamlMember(Alias = "parallel_jobs")]
     public int ParallelJobs { get; set; } = 1;
+
+    /// <summary>
+    /// Persistent directory for the dump. When set, the dump is kept after
+    /// the migration completes and reused on the next run if still valid
+    /// (i.e. toc.dat is present). Useful in Cloud Run Jobs backed by a GCS
+    /// volume mount so a failed restore does not require a full re-dump.
+    /// If null, a temporary directory under Path.GetTempPath() is used and
+    /// deleted after each run.
+    /// </summary>
+    [YamlMember(Alias = "dump_dir")]
+    public string? DumpDir { get; set; }
 }
 
 public class SanitizeRule

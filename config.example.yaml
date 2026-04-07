@@ -30,6 +30,14 @@ migration:
     # Default: 1 (single-threaded). Increase for large databases with many tables.
     # parallel_jobs: 4
 
+    # Persistent dump directory. When set, the dump is kept after the migration
+    # completes and reused on the next run if valid (toc.dat present).
+    # Useful in Cloud Run Jobs backed by a GCS volume mount: if pg_restore fails
+    # you can re-run without re-dumping the source database.
+    # Can be overridden at runtime with the --dump-dir CLI flag.
+    # When not set, a temporary directory is created and deleted after each run.
+    # dump_dir: "/gcs/dumps/mydb"
+
 # Sanitization rules applied to the TARGET database after restore.
 # Each rule targets a table and declares which columns to sanitize and how.
 sanitize:

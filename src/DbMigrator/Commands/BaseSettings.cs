@@ -51,5 +51,9 @@ public class BaseSettings : CommandSettings
     [Description("Also write logs to a file at the specified path")]
     public string? LogFile { get; set; }
 
+    [CommandOption("--dump-dir <PATH>")]
+    [Description("Persist the pg_dump directory at this path; reuse it on next run if valid (skips re-dump). Overrides dump.dump_dir in config.")]
+    public string? DumpDir { get; set; }
+
     public bool IsDebug => Verbose || LogLevel.Equals("debug", StringComparison.OrdinalIgnoreCase);
 }

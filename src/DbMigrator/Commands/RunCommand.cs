@@ -34,7 +34,7 @@ public class RunCommand(IServiceProvider services) : AsyncCommand<BaseSettings>
                 var migrator = services.GetRequiredService<Migrator>();
                 migrator.Verbose = settings.IsDebug;
                 migrator.PrintArgs = settings.PrintArgs;
-                await migrator.RunAsync(config.Migration, cancellationToken);
+                await migrator.RunAsync(config.Migration, settings.DumpDir, cancellationToken);
                 AnsiConsole.MarkupLine("[green]✓ Migration completed[/]");
             }
             else
