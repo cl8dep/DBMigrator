@@ -39,5 +39,9 @@ public class BaseSettings : CommandSettings
     [Description("Disable ANSI color codes in output (also respected via NO_COLOR env var)")]
     public bool NoColor { get; set; }
 
+    [CommandOption("--preflight-only")]
+    [Description("Run pre-flight checks only (connectivity, permissions, locks) and exit")]
+    public bool PreflightOnly { get; set; }
+
     public bool IsDebug => Verbose || LogLevel.Equals("debug", StringComparison.OrdinalIgnoreCase);
 }

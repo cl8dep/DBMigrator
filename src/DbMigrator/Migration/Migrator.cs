@@ -155,7 +155,7 @@ public class Migrator(ILogger<Migrator> logger)
         return args;
     }
 
-    private static async Task RunPreflightChecksAsync(MigrationConfig config, CancellationToken ct)
+    public static async Task RunPreflightChecksAsync(MigrationConfig config, CancellationToken ct)
     {
         AnsiConsole.MarkupLine("[grey]Running pre-flight checks...[/]");
 
