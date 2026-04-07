@@ -31,7 +31,7 @@ public class Sanitizer(ILogger<Sanitizer> logger)
         {
             foreach (var rule in config.Sanitize)
             {
-                var rowsAffected = await ApplyRuleAsync(conn, tx, rule, dryRun, ct);
+                var rowsAffected = await ApplyRuleAsync(conn, tx, rule, config.FakerSeed, dryRun, ct);
                 report.AddResult(rule.Table, rowsAffected);
             }
 
@@ -60,10 +60,11 @@ public class Sanitizer(ILogger<Sanitizer> logger)
         NpgsqlConnection conn,
         NpgsqlTransaction tx,
         SanitizeRule rule,
+        int? fakerSeed,
         bool dryRun,
         CancellationToken ct)
     {
-        var (sql, parameters) = BuildUpdateSql(rule);
+        var (sql, parameters) = BuildUpdateSql(rule, fakerSeed);
 
         if (dryRun)
         {
@@ -90,14 +91,14 @@ public class Sanitizer(ILogger<Sanitizer> logger)
     /// Builds the parameterized UPDATE SQL for a sanitize rule.
     /// Extracted as an internal method to enable unit testing without a DB connection.
     /// </summary>
-    public static (string Sql, Dictionary<string, object?> Parameters) BuildUpdateSql(SanitizeRule rule)
+    public static (string Sql, Dictionary<string, object?> Parameters) BuildUpdateSql(SanitizeRule rule, int? fakerSeed = null)
     {
         var parameters = new Dictionary<string, object?>();
         var setClauses = new List<string>();
 
         foreach (var colRule in rule.Columns)
         {
-            var strategy = StrategyFactory.Create(colRule);
+            var strategy = StrategyFactory.Create(colRule, fakerSeed);
             var paramName = $"p_{colRule.Name}";
             var sqlExpr = strategy.BuildSqlExpression(colRule, paramName, parameters);
 

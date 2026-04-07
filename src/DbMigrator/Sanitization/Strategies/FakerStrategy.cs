@@ -10,7 +10,18 @@ namespace DbMigrator.Sanitization.Strategies;
 /// </summary>
 public class FakerStrategy : IStrategy
 {
-    private readonly Faker _faker = new("en");
+    private readonly Faker _faker;
+
+    /// <param name="seed">
+    /// Optional seed for deterministic output. When provided, every run produces the same
+    /// fake values in the same column-processing order. Omit for random output each run.
+    /// </param>
+    public FakerStrategy(int? seed = null)
+    {
+        _faker = new Faker("en");
+        if (seed.HasValue)
+            _faker.Random = new Bogus.Randomizer(seed.Value);
+    }
 
     public static readonly IReadOnlySet<string> KnownMethods = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
     {

@@ -4,13 +4,13 @@ namespace DbMigrator.Sanitization.Strategies;
 
 public static class StrategyFactory
 {
-    public static IStrategy Create(ColumnRule rule) =>
+    public static IStrategy Create(ColumnRule rule, int? fakerSeed = null) =>
         rule.Strategy.ToLowerInvariant() switch
         {
             "static"       => new StaticStrategy(),
             "null_value"   => new NullStrategy(),
             "template"     => new TemplateStrategy(),
-            "faker"        => new FakerStrategy(),
+            "faker"        => new FakerStrategy(fakerSeed),
             "hash"         => new HashStrategy(),
             "partial_mask" => new PartialMaskStrategy(),
             "random_from"  => new RandomFromStrategy(),

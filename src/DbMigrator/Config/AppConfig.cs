@@ -9,6 +9,14 @@ public class AppConfig
 
     [YamlMember(Alias = "sanitize")]
     public List<SanitizeRule> Sanitize { get; set; } = [];
+
+    /// <summary>
+    /// Optional seed for the faker strategy. When set, every run produces the same
+    /// fake values in the same order — useful for reproducible QA environments.
+    /// Omit (or set to null) for random output on each run.
+    /// </summary>
+    [YamlMember(Alias = "faker_seed")]
+    public int? FakerSeed { get; set; }
 }
 
 public class MigrationConfig
