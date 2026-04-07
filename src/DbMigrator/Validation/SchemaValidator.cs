@@ -32,7 +32,6 @@ public class SchemaValidator(ILogger<SchemaValidator> logger)
         try
         {
             await conn.OpenAsync(ct);
-            logger.LogInformation("Connected to source DB for schema validation");
         }
         catch (Exception ex)
         {

@@ -15,17 +15,19 @@ public class RunCommand(IServiceProvider services) : AsyncCommand<BaseSettings>
         {
             var config = CommandHelpers.LoadAndValidateConfig(settings);
 
-            if (settings.PreflightOnly)
-            {
-                await Migrator.RunPreflightChecksAsync(config.Migration, cancellationToken);
-                AnsiConsole.MarkupLine("[green]✓ Pre-flight checks passed[/]");
-                return 0;
-            }
+            // ── 1. Pre-flight checks (always) ────────────────────────────────
+            await Migrator.RunPreflightChecksAsync(config.Migration, cancellationToken);
+            AnsiConsole.MarkupLine("[green]✓ Pre-flight checks passed[/]");
 
+            if (settings.PreflightOnly)
+                return 0;
+
+            // ── 2. Schema validation ─────────────────────────────────────────
             var validator = services.GetRequiredService<SchemaValidator>();
             var ok = await CommandHelpers.RunSchemaValidationAsync(config, settings, validator, cancellationToken);
             if (!ok) return 1;
 
+            // ── 3. Migration ─────────────────────────────────────────────────
             if (!settings.DryRun)
             {
                 AnsiConsole.MarkupLine("[bold blue]▶ Starting migration...[/]");
@@ -40,6 +42,7 @@ public class RunCommand(IServiceProvider services) : AsyncCommand<BaseSettings>
                 AnsiConsole.MarkupLine("[yellow]⚠ DRY RUN[/] Skipping migration step");
             }
 
+            // ── 4. Sanitization ──────────────────────────────────────────────
             AnsiConsole.MarkupLine("[bold blue]▶ Starting sanitization...[/]");
             var sanitizer = services.GetRequiredService<Sanitizer>();
             var report = await sanitizer.RunAsync(config, settings.DryRun, cancellationToken);

@@ -44,10 +44,18 @@ var logFile = args.Contains("--log-file")
 var logConfig = new LoggerConfiguration().MinimumLevel.Is(serilogLevel);
 
 if (gcpLogs)
-    // Compact JSON (CLEF) — Cloud Logging parses @t/@m/@l fields natively
+{
+    // Compact JSON (CLEF) — Cloud Logging parses @t/@m/@l fields natively.
     logConfig.WriteTo.Console(new RenderedCompactJsonFormatter());
-else
-    logConfig.WriteTo.Console(outputTemplate: "[{Timestamp:HH:mm:ss} {Level:u3}] {Message:lj}{NewLine}{Exception}");
+
+    // Suppress AnsiConsole entirely — Serilog JSON owns stdout.
+    // All user-facing messages are already mirrored via Log.* calls.
+    AnsiConsole.Console = AnsiConsole.Create(new AnsiConsoleSettings
+    {
+        Out = new AnsiConsoleOutput(TextWriter.Null)
+    });
+}
+// else: no Serilog console sink — AnsiConsole handles all interactive output cleanly.
 
 if (logFile is not null)
     logConfig.WriteTo.File(

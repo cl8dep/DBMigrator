@@ -14,17 +14,19 @@ public class MigrateCommand(IServiceProvider services) : AsyncCommand<BaseSettin
         {
             var config = CommandHelpers.LoadAndValidateConfig(settings);
 
-            if (settings.PreflightOnly)
-            {
-                await Migrator.RunPreflightChecksAsync(config.Migration, cancellationToken);
-                AnsiConsole.MarkupLine("[green]✓ Pre-flight checks passed[/]");
-                return 0;
-            }
+            // ── 1. Pre-flight checks (always) ────────────────────────────────
+            await Migrator.RunPreflightChecksAsync(config.Migration, cancellationToken);
+            AnsiConsole.MarkupLine("[green]✓ Pre-flight checks passed[/]");
 
+            if (settings.PreflightOnly)
+                return 0;
+
+            // ── 2. Schema validation ─────────────────────────────────────────
             var validator = services.GetRequiredService<SchemaValidator>();
             var ok = await CommandHelpers.RunSchemaValidationAsync(config, settings, validator, cancellationToken);
             if (!ok) return 1;
 
+            // ── 3. Migration ─────────────────────────────────────────────────
             if (settings.DryRun)
             {
                 AnsiConsole.MarkupLine("[yellow]⚠ DRY RUN[/] Would run pg_dump + pg_restore but skipping");
