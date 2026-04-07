@@ -326,20 +326,23 @@ public class Migrator(ILogger<Migrator> logger)
 
         using var process = new Process { StartInfo = psi };
 
+        // Buffer all stderr lines so we can dump them on failure.
+        // The spinner only shows the last line visually — error details get lost otherwise.
+        var stderrLines = new System.Collections.Concurrent.ConcurrentQueue<string>();
+
         process.OutputDataReceived += (_, e) =>
         {
             if (e.Data is not null)
                 logger.LogDebug("[{Exe}] {Line}", executable, e.Data);
         };
 
-        // pg_dump / pg_restore write progress to stderr when --verbose is set.
-        // Route lines to the spinner callback only — do NOT also call logger.LogDebug here,
-        // because Serilog writes directly to stdout and conflicts with Spectre.Console's
-        // cursor management, producing a visual gap in the output.
         process.ErrorDataReceived += (_, e) =>
         {
             if (e.Data is { Length: > 0 })
+            {
+                stderrLines.Enqueue(e.Data);
                 onStderrLine(e.Data);
+            }
         };
 
         process.Start();
@@ -361,8 +364,15 @@ public class Migrator(ILogger<Migrator> logger)
         }
 
         if (process.ExitCode != 0)
+        {
+            // Log all buffered stderr so the actual error is visible in any environment
+            foreach (var line in stderrLines)
+                logger.LogError("[{Exe}] {Line}", executable, line);
+
+            var lastError = stderrLines.LastOrDefault() ?? "no output captured";
             throw new InvalidOperationException(
-                $"'{executable}' exited with code {process.ExitCode}. Check the logs above for details.");
+                $"'{executable}' exited with code {process.ExitCode}: {lastError}");
+        }
     }
 
     private static string Truncate(string line) =>
