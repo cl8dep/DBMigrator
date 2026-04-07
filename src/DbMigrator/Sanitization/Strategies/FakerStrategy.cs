@@ -12,6 +12,15 @@ public class FakerStrategy : IStrategy
 {
     private readonly Faker _faker = new("en");
 
+    public static readonly IReadOnlySet<string> KnownMethods = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+    {
+        "first_name", "last_name", "full_name", "email", "user_name", "phone",
+        "address", "street_address", "city", "country", "zip_code", "company",
+        "lorem", "paragraph", "url", "ip_address", "uuid", "random_number",
+        "random_double", "digits_as_integer", "date", "datetime", "color",
+        "product", "price", "iban", "credit_card", "ssn",
+    };
+
     // Map of faker keys → functions that produce a fake value
     private readonly Dictionary<string, Func<Faker, object?>> _methods = new(StringComparer.OrdinalIgnoreCase)
     {

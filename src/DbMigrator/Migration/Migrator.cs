@@ -106,6 +106,9 @@ public class Migrator(ILogger<Migrator> logger)
 
             AnsiConsole.MarkupLine($"[green]✓ Restore completed[/] in {restoreSw.Elapsed:g}");
             logger.LogInformation("Restore completed in {Elapsed:g}", restoreSw.Elapsed);
+
+            // ── Verification ─────────────────────────────────────────────────
+            await VerifyAsync(config, ct);
         }
         finally
         {
@@ -204,10 +207,25 @@ public class Migrator(ILogger<Migrator> logger)
         return args;
     }
 
-    public static async Task RunPreflightChecksAsync(MigrationConfig config, CancellationToken ct)
+    public static async Task RunPreflightChecksAsync(MigrationConfig config, string? dumpDir = null, CancellationToken ct = default)
     {
         AnsiConsole.MarkupLine("[grey]Running pre-flight checks...[/]");
         Log.Information("Running pre-flight checks");
+
+        // ── 0. Tool availability: pg_dump and pg_restore ─────────────────────
+        foreach (var tool in new[] { "pg_dump", "pg_restore" })
+        {
+            var version = await TryGetToolVersionAsync(tool);
+            if (version is null)
+            {
+                Log.Error("Required tool '{Tool}' not found on PATH", tool);
+                throw new InvalidOperationException(
+                    $"'{tool}' is not installed or not on PATH. " +
+                    $"Install PostgreSQL client tools: https://www.postgresql.org/download/");
+            }
+            AnsiConsole.MarkupLine($"[green]✓ {tool}[/] [grey]{Markup.Escape(version)}[/]");
+            Log.Information("{Tool} found: {Version}", tool, version);
+        }
 
         // ── 1. Connectivity: source ──────────────────────────────────────────
         await using var sourceConn = new NpgsqlConnection(config.Source.ToConnectionString());
@@ -245,7 +263,49 @@ public class Migrator(ILogger<Migrator> logger)
                 $"Cannot connect to target DB ({config.Target.Database}@{config.Target.Host}:{config.Target.Port}): {ex.Message}", ex);
         }
 
-        // ── 3. Read permissions on source (tables + sequences) ──────────────
+        // ── 3. Disk space: dump directory vs source DB size ──────────────────
+        try
+        {
+            // Query the on-disk size of the source database
+            await using var sizeCmd = sourceConn.CreateCommand();
+            sizeCmd.CommandText = "SELECT pg_database_size(current_database())";
+            var dbSizeBytes = Convert.ToInt64(await sizeCmd.ExecuteScalarAsync(ct) ?? 0L);
+
+            // Where will the dump land?
+            var dumpRoot = dumpDir ?? Path.GetTempPath();
+            var driveRoot = Path.GetPathRoot(Path.GetFullPath(dumpRoot)) ?? "/";
+            var drive = new DriveInfo(driveRoot);
+
+            // Require 1.2× the source size (compressed dump is smaller, but be conservative)
+            var requiredBytes = (long)(dbSizeBytes * 1.2);
+            var availableBytes = drive.AvailableFreeSpace;
+
+            if (availableBytes < requiredBytes)
+            {
+                Log.Error(
+                    "Insufficient disk space: need {Required:N0} bytes, have {Available:N0} bytes at {Drive}",
+                    requiredBytes, availableBytes, drive.Name);
+                throw new InvalidOperationException(
+                    $"Insufficient disk space for dump at '{dumpRoot}': " +
+                    $"need ~{requiredBytes / 1_073_741_824.0:F1} GB, " +
+                    $"have {availableBytes / 1_073_741_824.0:F1} GB available.");
+            }
+
+            AnsiConsole.MarkupLine(
+                $"[green]✓ Disk space OK[/] [grey]{availableBytes / 1_073_741_824.0:F1} GB available " +
+                $"(source DB: {dbSizeBytes / 1_073_741_824.0:F1} GB)[/]");
+            Log.Information("Disk space OK: {Available:N0} bytes available, source DB {Size:N0} bytes",
+                availableBytes, dbSizeBytes);
+        }
+        catch (InvalidOperationException) { throw; }
+        catch (Exception ex)
+        {
+            // Non-fatal: disk info may not be available in all environments (e.g. containers)
+            AnsiConsole.MarkupLine($"[yellow]⚠ PRE-FLIGHT[/] Could not check disk space: {Markup.Escape(ex.Message)}");
+            Log.Warning(ex, "Could not check disk space — skipping");
+        }
+
+        // ── 5. Read permissions on source (tables + sequences) ───────────────
         // Uses has_table_privilege / has_sequence_privilege so role-based grants
         // (e.g. pg_read_all_data) are respected, not just direct grants.
         await using (var cmd = sourceConn.CreateCommand())
@@ -311,7 +371,7 @@ public class Migrator(ILogger<Migrator> logger)
             }
         }
 
-        // ── 4. Write permission on target ─────────────────────────────────────
+        // ── 6. Write permission on target ────────────────────────────────────
         // If target is empty (fresh restore destination) there are no tables yet —
         // skip the check and let pg_restore create them.
         await using (var cmd = targetConn.CreateCommand())
@@ -357,7 +417,7 @@ public class Migrator(ILogger<Migrator> logger)
             }
         }
 
-        // ── 5. Idle-in-transaction connections on source ─────────────────────
+        // ── 7. Idle-in-transaction connections on source ─────────────────────
         // These hold table locks and will cause pg_dump to hang.
         await using (var cmd = sourceConn.CreateCommand())
         {
@@ -385,7 +445,7 @@ public class Migrator(ILogger<Migrator> logger)
             }
         }
 
-        // ── 6. Ungranted locks on source ─────────────────────────────────────
+        // ── 8. Ungranted locks on source ─────────────────────────────────────
         await using (var cmd = sourceConn.CreateCommand())
         {
             cmd.CommandText = """
@@ -512,6 +572,93 @@ public class Migrator(ILogger<Migrator> logger)
             var lastError = errorTail.Length > 0 ? errorTail[^1] : "no output captured";
             throw new InvalidOperationException(
                 $"'{executable}' exited with code {process.ExitCode}: {lastError}");
+        }
+    }
+
+    private async Task VerifyAsync(MigrationConfig config, CancellationToken ct)
+    {
+        AnsiConsole.MarkupLine("[grey]Running post-migration verification...[/]");
+        logger.LogInformation("Running post-migration verification");
+
+        var schema = config.Source.Schema;
+        var sourceTables = await GetTableListAsync(config.Source.ToConnectionString(), schema, ct);
+        var targetTables = await GetTableListAsync(config.Target.ToConnectionString(), schema, ct);
+
+        var missing = sourceTables.Except(targetTables).OrderBy(t => t).ToList();
+        var extra   = targetTables.Except(sourceTables).OrderBy(t => t).ToList();
+
+        if (missing.Count > 0)
+        {
+            foreach (var t in missing)
+            {
+                AnsiConsole.MarkupLine($"[red]✗ VERIFY[/] Table '{Markup.Escape(t)}' is present in source but missing from target");
+                logger.LogError("Verification: table '{Table}' missing from target", t);
+            }
+        }
+
+        if (extra.Count > 0)
+        {
+            foreach (var t in extra)
+            {
+                AnsiConsole.MarkupLine($"[yellow]⚠ VERIFY[/] Table '{Markup.Escape(t)}' exists in target but not in source");
+                logger.LogWarning("Verification: table '{Table}' in target but not in source", t);
+            }
+        }
+
+        var tableCount = sourceTables.Count;
+        if (missing.Count == 0 && extra.Count == 0)
+        {
+            AnsiConsole.MarkupLine($"[green]✓ Post-migration verification passed[/] [grey]({tableCount} table(s) present in target)[/]");
+            logger.LogInformation("Post-migration verification passed ({Count} tables)", tableCount);
+        }
+        else if (missing.Count > 0)
+        {
+            AnsiConsole.MarkupLine(
+                $"[red]✗ Verification failed:[/] {missing.Count} table(s) missing from target.");
+            logger.LogError("Verification failed: {Missing} table(s) missing from target", missing.Count);
+        }
+    }
+
+    private static async Task<HashSet<string>> GetTableListAsync(
+        string connectionString, string schema, CancellationToken ct)
+    {
+        await using var conn = new NpgsqlConnection(connectionString);
+        await conn.OpenAsync(ct);
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT table_name
+            FROM information_schema.tables
+            WHERE table_schema = @schema AND table_type = 'BASE TABLE'
+            ORDER BY table_name
+            """;
+        cmd.Parameters.AddWithValue("schema", schema);
+        var tables = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        await using var reader = await cmd.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct))
+            tables.Add(reader.GetString(0));
+        return tables;
+    }
+
+    private static async Task<string?> TryGetToolVersionAsync(string tool)
+    {
+        try
+        {
+            var psi = new ProcessStartInfo(tool, "--version")
+            {
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+            using var p = Process.Start(psi);
+            if (p is null) return null;
+            var output = await p.StandardOutput.ReadToEndAsync();
+            await p.WaitForExitAsync();
+            return p.ExitCode == 0 ? output.Trim().Split('\n')[0].Trim() : null;
+        }
+        catch
+        {
+            return null;
         }
     }
 

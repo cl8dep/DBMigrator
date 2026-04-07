@@ -85,6 +85,13 @@ public class DumpConfig
     /// </summary>
     [YamlMember(Alias = "dump_dir")]
     public string? DumpDir { get; set; }
+
+    /// <summary>
+    /// Maximum time allowed for a single pg_dump or pg_restore process, in minutes.
+    /// Default: 120 (2 hours). Increase for very large databases.
+    /// </summary>
+    [YamlMember(Alias = "timeout_minutes")]
+    public int? TimeoutMinutes { get; set; }
 }
 
 public class SanitizeRule
@@ -116,4 +123,20 @@ public class ColumnRule
 
     [YamlMember(Alias = "faker")]
     public string? Faker { get; set; }
+
+    /// <summary>Number of leading characters to keep visible (partial_mask strategy).</summary>
+    [YamlMember(Alias = "keep_first")]
+    public int? KeepFirst { get; set; }
+
+    /// <summary>Number of trailing characters to keep visible (partial_mask strategy).</summary>
+    [YamlMember(Alias = "keep_last")]
+    public int? KeepLast { get; set; }
+
+    /// <summary>Character used to replace masked characters. Default: '*'.</summary>
+    [YamlMember(Alias = "mask_char")]
+    public string? MaskChar { get; set; }
+
+    /// <summary>List of values to pick from randomly (random_from strategy).</summary>
+    [YamlMember(Alias = "values")]
+    public List<string>? Values { get; set; }
 }

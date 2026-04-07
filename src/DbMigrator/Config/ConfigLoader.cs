@@ -13,7 +13,7 @@ public static class ConfigLoader
 
     private static readonly HashSet<string> KnownStrategies = new(StringComparer.OrdinalIgnoreCase)
     {
-        "static", "null_value", "template", "faker", "hash"
+        "static", "null_value", "template", "faker", "hash", "partial_mask", "random_from"
     };
 
     private static readonly HashSet<string> ValidSslModes = new(StringComparer.OrdinalIgnoreCase)
@@ -111,13 +111,39 @@ public static class ConfigLoader
                     errors.Add($"Unknown strategy '{col.Strategy}' for column '{rule.Table}.{col.Name}'. " +
                                $"Valid values: {string.Join(", ", KnownStrategies)}");
 
-                if (string.Equals(col.Strategy, "faker", StringComparison.OrdinalIgnoreCase) &&
-                    string.IsNullOrWhiteSpace(col.Faker))
-                    errors.Add($"Column '{rule.Table}.{col.Name}' uses strategy 'faker' but 'faker' field is missing");
+                if (string.Equals(col.Strategy, "faker", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (string.IsNullOrWhiteSpace(col.Faker))
+                        errors.Add($"Column '{rule.Table}.{col.Name}' uses strategy 'faker' but 'faker' field is missing");
+                    else if (!Sanitization.Strategies.FakerStrategy.KnownMethods.Contains(col.Faker))
+                        errors.Add(
+                            $"Unknown faker method '{col.Faker}' for column '{rule.Table}.{col.Name}'. " +
+                            $"Available: {string.Join(", ", Sanitization.Strategies.FakerStrategy.KnownMethods.Order())}");
+                }
 
                 if (string.Equals(col.Strategy, "template", StringComparison.OrdinalIgnoreCase) &&
                     string.IsNullOrWhiteSpace(col.Value))
                     errors.Add($"Column '{rule.Table}.{col.Name}' uses strategy 'template' but 'value' field is missing");
+
+                if (string.Equals(col.Strategy, "random_from", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (col.Values is null || col.Values.Count == 0)
+                        errors.Add($"Column '{rule.Table}.{col.Name}' uses strategy 'random_from' but 'values' list is missing or empty");
+                    else if (col.Values.Count == 1)
+                        errors.Add($"Column '{rule.Table}.{col.Name}': 'random_from' with a single value — use 'static' instead");
+                }
+
+                if (string.Equals(col.Strategy, "partial_mask", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (col.KeepFirst is null && col.KeepLast is null)
+                        errors.Add($"Column '{rule.Table}.{col.Name}' uses strategy 'partial_mask' but neither 'keep_first' nor 'keep_last' is set");
+                    if (col.KeepFirst is < 0)
+                        errors.Add($"Column '{rule.Table}.{col.Name}': 'keep_first' must be >= 0");
+                    if (col.KeepLast is < 0)
+                        errors.Add($"Column '{rule.Table}.{col.Name}': 'keep_last' must be >= 0");
+                    if (col.MaskChar is not null && col.MaskChar.Length != 1)
+                        errors.Add($"Column '{rule.Table}.{col.Name}': 'mask_char' must be a single character");
+                }
             }
         }
 

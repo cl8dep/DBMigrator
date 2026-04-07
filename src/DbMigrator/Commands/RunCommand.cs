@@ -16,7 +16,8 @@ public class RunCommand(IServiceProvider services) : AsyncCommand<BaseSettings>
             var config = CommandHelpers.LoadAndValidateConfig(settings);
 
             // ── 1. Pre-flight checks (always) ────────────────────────────────
-            await Migrator.RunPreflightChecksAsync(config.Migration, cancellationToken);
+            var dumpDir = settings.DumpDir ?? config.Migration.Dump.DumpDir;
+            await Migrator.RunPreflightChecksAsync(config.Migration, dumpDir, cancellationToken);
             AnsiConsole.MarkupLine("[green]✓ Pre-flight checks passed[/]");
 
             if (settings.PreflightOnly)
@@ -34,6 +35,8 @@ public class RunCommand(IServiceProvider services) : AsyncCommand<BaseSettings>
                 var migrator = services.GetRequiredService<Migrator>();
                 migrator.Verbose = settings.IsDebug;
                 migrator.PrintArgs = settings.PrintArgs;
+                if (config.Migration.Dump.TimeoutMinutes is { } t)
+                    migrator.ProcessTimeout = TimeSpan.FromMinutes(t);
                 await migrator.RunAsync(config.Migration, settings.DumpDir, cancellationToken);
                 AnsiConsole.MarkupLine("[green]✓ Migration completed[/]");
             }
