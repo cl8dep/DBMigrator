@@ -187,7 +187,41 @@ public class Migrator(ILogger<Migrator> logger)
                 $"Cannot connect to target DB ({config.Target.Database}@{config.Target.Host}:{config.Target.Port}): {ex.Message}", ex);
         }
 
-        // ── 3. Idle-in-transaction connections on source ─────────────────────
+        // ── 3. Read permission on source ─────────────────────────────────────
+        await using (var cmd = sourceConn.CreateCommand())
+        {
+            cmd.CommandText = """
+                SELECT count(*)
+                FROM information_schema.table_privileges
+                WHERE grantee = current_user
+                  AND privilege_type = 'SELECT'
+                """;
+            var selectCount = (long)(await cmd.ExecuteScalarAsync(ct) ?? 0L);
+            if (selectCount == 0)
+                throw new InvalidOperationException(
+                    $"User '{config.Source.User}' has no SELECT privileges on any table in source DB. " +
+                    $"Run: GRANT SELECT ON ALL TABLES IN SCHEMA public TO \"{config.Source.User}\";");
+            AnsiConsole.MarkupLine($"[grey]✓ Source DB read access confirmed ({selectCount} table(s))[/]");
+        }
+
+        // ── 4. Write permission on target ─────────────────────────────────────
+        await using (var cmd = targetConn.CreateCommand())
+        {
+            cmd.CommandText = """
+                SELECT count(*)
+                FROM information_schema.table_privileges
+                WHERE grantee = current_user
+                  AND privilege_type = 'INSERT'
+                """;
+            var insertCount = (long)(await cmd.ExecuteScalarAsync(ct) ?? 0L);
+            if (insertCount == 0)
+                throw new InvalidOperationException(
+                    $"User '{config.Target.User}' has no INSERT privileges on any table in target DB. " +
+                    $"Run: GRANT INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO \"{config.Target.User}\";");
+            AnsiConsole.MarkupLine($"[grey]✓ Target DB write access confirmed ({insertCount} table(s))[/]");
+        }
+
+        // ── 5. Idle-in-transaction connections on source ─────────────────────
         // These hold table locks and will cause pg_dump to hang.
         await using (var cmd = sourceConn.CreateCommand())
         {
@@ -213,7 +247,7 @@ public class Migrator(ILogger<Migrator> logger)
             }
         }
 
-        // ── 4. Ungranted locks on source ─────────────────────────────────────
+        // ── 6. Ungranted locks on source ─────────────────────────────────────
         await using (var cmd = sourceConn.CreateCommand())
         {
             cmd.CommandText = """
