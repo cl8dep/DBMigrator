@@ -7,13 +7,14 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Serilog;
 using Serilog.Events;
+using Serilog.Formatting.Compact;
 using Spectre.Console;
 using Spectre.Console.Cli;
 
 // Parse log level early from args before DI is built
 var logLevel = args.Contains("--log-level")
     ? args.SkipWhile(a => a != "--log-level").Skip(1).FirstOrDefault() ?? "info"
-    : "info";
+    : args.Contains("--verbose") || args.Contains("-v") ? "debug" : "info";
 
 var serilogLevel = logLevel.ToLowerInvariant() switch
 {
@@ -30,10 +31,32 @@ var noColor = args.Contains("--no-color")
 if (noColor)
     AnsiConsole.Profile.Capabilities.Ansi = false;
 
-Log.Logger = new LoggerConfiguration()
-    .MinimumLevel.Is(serilogLevel)
-    .WriteTo.Console(outputTemplate: "[{Timestamp:HH:mm:ss} {Level:u3}] {Message:lj}{NewLine}{Exception}")
-    .CreateLogger();
+// GCP structured JSON logging: enabled via --gcp-logs flag, or auto-detected in Cloud Run
+// (Cloud Run always sets the K_SERVICE env var)
+var gcpLogs = args.Contains("--gcp-logs")
+    || !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("K_SERVICE"));
+
+// Optional file logging: --log-file <path>
+var logFile = args.Contains("--log-file")
+    ? args.SkipWhile(a => a != "--log-file").Skip(1).FirstOrDefault()
+    : null;
+
+var logConfig = new LoggerConfiguration().MinimumLevel.Is(serilogLevel);
+
+if (gcpLogs)
+    // Compact JSON (CLEF) — Cloud Logging parses @t/@m/@l fields natively
+    logConfig.WriteTo.Console(new RenderedCompactJsonFormatter());
+else
+    logConfig.WriteTo.Console(outputTemplate: "[{Timestamp:HH:mm:ss} {Level:u3}] {Message:lj}{NewLine}{Exception}");
+
+if (logFile is not null)
+    logConfig.WriteTo.File(
+        logFile,
+        outputTemplate: "[{Timestamp:HH:mm:ss} {Level:u3}] {Message:lj}{NewLine}{Exception}",
+        rollingInterval: RollingInterval.Infinite,
+        shared: false);
+
+Log.Logger = logConfig.CreateLogger();
 
 var services = new ServiceCollection();
 

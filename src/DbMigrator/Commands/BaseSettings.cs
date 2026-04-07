@@ -43,5 +43,13 @@ public class BaseSettings : CommandSettings
     [Description("Run pre-flight checks only (connectivity, permissions, locks) and exit")]
     public bool PreflightOnly { get; set; }
 
+    [CommandOption("--gcp-logs")]
+    [Description("Output structured JSON logs for Google Cloud Logging (auto-enabled in Cloud Run)")]
+    public bool GcpLogs { get; set; }
+
+    [CommandOption("--log-file <PATH>")]
+    [Description("Also write logs to a file at the specified path")]
+    public string? LogFile { get; set; }
+
     public bool IsDebug => Verbose || LogLevel.Equals("debug", StringComparison.OrdinalIgnoreCase);
 }
