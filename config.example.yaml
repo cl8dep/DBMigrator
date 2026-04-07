@@ -38,6 +38,15 @@ migration:
     # When not set, a temporary directory is created and deleted after each run.
     # dump_dir: "/gcs/dumps/mydb"
 
+    # Maximum time allowed for a single pg_dump or pg_restore process, in minutes.
+    # Default: 120 (2 hours). Increase for very large databases.
+    # timeout_minutes: 240
+
+# Optional seed for the faker strategy. When set, every run produces the same
+# fake values in the same column-processing order — useful for reproducible QA envs.
+# Omit (or comment out) for random output on each run.
+# faker_seed: 42
+
 # Sanitization rules applied to the TARGET database after restore.
 # Each rule targets a table and declares which columns to sanitize and how.
 sanitize:
@@ -84,6 +93,18 @@ sanitize:
       # Uses pure SQL: encode(sha256(column::text::bytea), 'hex')
       - name: national_id
         strategy: hash
+
+      # strategy: partial_mask — keep first/last N characters, mask the middle with '*'
+      # keep_first and keep_last are optional (default: 0). mask_char default: '*'
+      - name: phone
+        strategy: partial_mask
+        keep_last: 4        # e.g. "+1 555 123 4567" → "***********4567"
+
+      # strategy: random_from — pick a random value from a fixed list each row
+      # Useful for categorical fields: status, role, country_code, plan, etc.
+      - name: plan
+        strategy: random_from
+        values: ["free", "pro", "enterprise"]
 
   - table: orders
     columns:
