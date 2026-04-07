@@ -134,7 +134,10 @@ public class Migrator(ILogger<Migrator> logger)
     {
         var args = BuildPgRestoreArgs(config, dumpPath, useDirectoryFormat, Verbose);
         var env = new Dictionary<string, string> { ["PGPASSWORD"] = config.Target.Password };
-        await RunProcessAsync("pg_restore", args, env, onProgress, ct);
+        // pg_restore exits with code 1 when using --clean on a fresh database because all
+        // DROP IF EXISTS statements "fail" (objects don't exist yet). The data IS restored.
+        // Only exit code 3 is a true fatal failure in pg_restore.
+        await RunProcessAsync("pg_restore", args, env, onProgress, ct, warningExitCode: 1);
     }
 
     public static List<string> BuildPgDumpArgs(MigrationConfig config, string dumpPath, bool directoryFormat, bool verbose = false)
@@ -428,7 +431,8 @@ public class Migrator(ILogger<Migrator> logger)
         List<string> args,
         Dictionary<string, string> env,
         Action<string> onStderrLine,
-        CancellationToken ct)
+        CancellationToken ct,
+        int? warningExitCode = null)
     {
         var psi = new ProcessStartInfo
         {
@@ -487,6 +491,17 @@ public class Migrator(ILogger<Migrator> logger)
 
         if (process.ExitCode != 0)
         {
+            if (process.ExitCode == warningExitCode)
+            {
+                // Expected non-fatal exit code (e.g. pg_restore code 1 = ignored errors from --clean)
+                var lastLine = stderrLines.LastOrDefault();
+                if (lastLine is not null)
+                    AnsiConsole.MarkupLine($"[yellow]⚠ {Markup.Escape(executable)}:[/] {Markup.Escape(lastLine)}");
+                Log.Warning("{Exe} exited with code {Code} (non-fatal): {Message}",
+                    executable, process.ExitCode, lastLine ?? "no output");
+                return;
+            }
+
             // Log the tail of stderr as errors — verbose output fills the buffer but the real
             // failure reason is always at the end. Cap at 20 lines to avoid spamming the log.
             var errorTail = stderrLines.ToArray();

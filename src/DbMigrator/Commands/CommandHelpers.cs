@@ -84,8 +84,8 @@ internal static class CommandHelpers
     {
         AnsiConsole.MarkupLine($"[red]✗ Fatal error:[/] {Markup.Escape(ex.Message)}");
         Log.Fatal(ex, "Fatal error: {Message}", ex.Message);
-        if (settings.IsDebug)
-            AnsiConsole.MarkupLine($"[grey]{Markup.Escape(ex.ToString())}[/]");
+        if (settings.IsDebug && settings.LogFile is not null)
+            AnsiConsole.MarkupLine($"[grey]Stack trace written to {Markup.Escape(settings.LogFile)}[/]");
     }
 
     public static void PrintReport(Sanitization.SanitizationReport report)
