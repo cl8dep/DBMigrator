@@ -205,20 +205,30 @@ public class Migrator(ILogger<Migrator> logger)
         }
 
         // ── 4. Write permission on target ─────────────────────────────────────
+        // If target is empty (fresh restore destination) there are no tables to check yet —
+        // GRANT ON ALL TABLES is a no-op on an empty DB. Skip and let pg_restore create them.
         await using (var cmd = targetConn.CreateCommand())
         {
             cmd.CommandText = """
-                SELECT count(*)
-                FROM information_schema.table_privileges
-                WHERE grantee = current_user
-                  AND privilege_type = 'INSERT'
+                SELECT
+                  (SELECT count(*) FROM information_schema.tables
+                   WHERE table_schema = 'public' AND table_type = 'BASE TABLE') AS total_tables,
+                  (SELECT count(*) FROM information_schema.table_privileges
+                   WHERE grantee = current_user AND privilege_type = 'INSERT') AS insert_grants
                 """;
-            var insertCount = (long)(await cmd.ExecuteScalarAsync(ct) ?? 0L);
-            if (insertCount == 0)
+            await using var reader = await cmd.ExecuteReaderAsync(ct);
+            await reader.ReadAsync(ct);
+            var totalTables = reader.GetInt64(0);
+            var insertGrants = reader.GetInt64(1);
+
+            if (totalTables == 0)
+                AnsiConsole.MarkupLine("[grey]✓ Target DB is empty — pg_restore will create tables[/]");
+            else if (insertGrants == 0)
                 throw new InvalidOperationException(
                     $"User '{config.Target.User}' has no INSERT privileges on any table in target DB. " +
                     $"Run: GRANT INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO \"{config.Target.User}\";");
-            AnsiConsole.MarkupLine($"[grey]✓ Target DB write access confirmed ({insertCount} table(s))[/]");
+            else
+                AnsiConsole.MarkupLine($"[grey]✓ Target DB write access confirmed ({insertGrants} table(s))[/]");
         }
 
         // ── 5. Idle-in-transaction connections on source ─────────────────────
